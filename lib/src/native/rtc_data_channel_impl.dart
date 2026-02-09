@@ -86,6 +86,24 @@ class RTCDataChannelNative extends RTCDataChannel {
         _messageController.add(message);
         break;
 
+      case 'dataChannelBatchReceive':
+        // Optimization 2.2a: Process batch of messages from single platform channel event
+        final messages = map['messages'] as List<dynamic>;
+        for (final msgMap in messages) {
+          _dataChannelId = msgMap['id'];
+          var type = _typeStringToMessageType[msgMap['type']];
+          dynamic data = msgMap['data'];
+          RTCDataChannelMessage message;
+          if (type == MessageType.binary) {
+            message = RTCDataChannelMessage.fromBinary(data);
+          } else {
+            message = RTCDataChannelMessage(data);
+          }
+          onMessage?.call(message);
+          _messageController.add(message);
+        }
+        break;
+
       case 'dataChannelBufferedAmountChange':
         _bufferedAmount = map['bufferedAmount'];
         if (bufferedAmountLowThreshold != null) {

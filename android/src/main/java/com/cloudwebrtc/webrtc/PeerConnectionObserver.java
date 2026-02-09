@@ -48,6 +48,8 @@ import org.webrtc.VideoTrack;
 
 class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.StreamHandler {
   private final static String TAG = FlutterWebRTCPlugin.TAG;
+  private static final int MAX_SEND_RETRIES = 3;
+  private static final int INITIAL_RETRY_DELAY_MS = 10;
   private final Map<String, DataChannel> dataChannels = new HashMap<>();
   private final BinaryMessenger messenger;
   private final String id;
@@ -160,14 +162,67 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     }
   }
 
-  void dataChannelSend(String dataChannelId, ByteBuffer byteBuffer, Boolean isBinary) {
+  /**
+   * Send data through a data channel with retry logic.
+   *
+   * @param dataChannelId The flutter ID of the data channel
+   * @param byteBuffer The data to send
+   * @param isBinary Whether this is binary data
+   * @return true if send succeeded, false if all retries exhausted
+   */
+  boolean dataChannelSend(String dataChannelId, ByteBuffer byteBuffer, Boolean isBinary) {
     DataChannel dataChannel = dataChannels.get(dataChannelId);
-    if (dataChannel != null) {
-      DataChannel.Buffer buffer = new DataChannel.Buffer(byteBuffer, isBinary);
-      dataChannel.send(buffer);
-    } else {
-      Log.d(TAG, "dataChannelSend() dataChannel is null");
+    if (dataChannel == null) {
+      Log.w(TAG, "dataChannelSend() dataChannel is null for id: " + dataChannelId);
+      return false;
     }
+
+    DataChannel.State state = dataChannel.state();
+    if (state != DataChannel.State.OPEN) {
+      Log.w(TAG, "dataChannelSend() channel not open, state: " + state);
+      return false;
+    }
+
+    int retryCount = 0;
+    int delayMs = INITIAL_RETRY_DELAY_MS;
+
+    while (retryCount <= MAX_SEND_RETRIES) {
+      byteBuffer.rewind();
+      DataChannel.Buffer buffer = new DataChannel.Buffer(byteBuffer, isBinary);
+
+      boolean success = dataChannel.send(buffer);
+
+      if (success) {
+        if (retryCount > 0) {
+          Log.d(TAG, "dataChannelSend() succeeded after " + retryCount + " retries");
+        }
+        return true;
+      }
+
+      if (retryCount >= MAX_SEND_RETRIES) {
+        Log.w(TAG, "dataChannelSend() failed after " + MAX_SEND_RETRIES + " retries. " +
+                "Channel state: " + dataChannel.state() +
+                ", bufferedAmount: " + dataChannel.bufferedAmount());
+        return false;
+      }
+
+      Log.d(TAG, "dataChannelSend() failed, retry " + (retryCount + 1) +
+              " of " + MAX_SEND_RETRIES + " in " + delayMs + "ms. " +
+              "bufferedAmount: " + dataChannel.bufferedAmount());
+
+      try {
+        Thread.sleep(delayMs);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        Log.w(TAG, "dataChannelSend() retry interrupted");
+        return false;
+      }
+
+      retryCount++;
+      delayMs *= 2;
+    }
+
+    return false;
   }
 
   void dataChannelGetBufferedAmount(String dataChannelId, Result result) {
