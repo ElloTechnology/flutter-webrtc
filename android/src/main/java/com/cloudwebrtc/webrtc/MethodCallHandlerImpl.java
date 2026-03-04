@@ -15,6 +15,7 @@ import android.media.AudioDeviceInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Trace;
 import android.util.Log;
 import android.util.LongSparseArray;
 import android.view.Surface;
@@ -37,6 +38,7 @@ import com.cloudwebrtc.webrtc.utils.Callback;
 import com.cloudwebrtc.webrtc.utils.ConstraintsArray;
 import com.cloudwebrtc.webrtc.utils.ConstraintsMap;
 import com.cloudwebrtc.webrtc.utils.EglUtils;
+import com.cloudwebrtc.webrtc.utils.MainThreadQueueDepth;
 import com.cloudwebrtc.webrtc.utils.ObjectType;
 import com.cloudwebrtc.webrtc.utils.PermissionUtils;
 import com.cloudwebrtc.webrtc.utils.Utils;
@@ -188,6 +190,9 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
   }
   private void initialize(boolean bypassVoiceProcessing, int networkIgnoreMask, boolean forceSWCodec, List<String> forceSWCodecList,
   @Nullable ConstraintsMap androidAudioConfiguration, Severity logSeverity, @Nullable Integer audioSampleRate, @Nullable Integer audioOutputSampleRate) {
+    Trace.beginSection("FWRTC::initialize");
+    Log.d(TAG, "initialize thread=" + Thread.currentThread().getName() + " bypassVoiceProcessing=" + bypassVoiceProcessing);
+    try {
     if (mFactory != null) {
       return;
     }
@@ -341,11 +346,19 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             .setAudioDeviceModule(audioDeviceModule)
             .createPeerConnectionFactory();
 
+    } finally {
+      Trace.endSection();
+    }
   }
 
   @Override
   public void onMethodCall(MethodCall call, @NonNull Result notSafeResult) {
-
+    String traceLabel = "FWRTC::onMethodCall::" + call.method;
+    // Systrace section names are limited to 127 chars
+    if (traceLabel.length() > 127) traceLabel = traceLabel.substring(0, 127);
+    Trace.beginSection(traceLabel);
+    Log.d(TAG, "onMethodCall thread=" + Thread.currentThread().getName() + " method=" + call.method);
+    try {
     final AnyThreadResult result = new AnyThreadResult(notSafeResult);
     switch (call.method) {
       case "initialize": {
@@ -566,10 +579,16 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         break;
       }
       case "createDataChannel": {
-        String peerConnectionId = call.argument("peerConnectionId");
-        String label = call.argument("label");
-        Map<String, Object> dataChannelDict = call.argument("dataChannelDict");
-        createDataChannel(peerConnectionId, label, new ConstraintsMap(dataChannelDict), result);
+        Trace.beginSection("FWRTC::methodCall::createDataChannel::body");
+        try {
+          String peerConnectionId = call.argument("peerConnectionId");
+          String label = call.argument("label");
+          Map<String, Object> dataChannelDict = call.argument("dataChannelDict");
+          Log.d(TAG, "createDataChannel pcId=" + peerConnectionId + " label=" + label);
+          createDataChannel(peerConnectionId, label, new ConstraintsMap(dataChannelDict), result);
+        } finally {
+          Trace.endSection();
+        }
         break;
       }
       case "dataChannelGetBufferedAmount": {
@@ -579,19 +598,26 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         break;
       }
       case "dataChannelSend": {
-        String peerConnectionId = call.argument("peerConnectionId");
-        String dataChannelId = call.argument("dataChannelId");
-        String type = call.argument("type");
-        Boolean isBinary = type.equals("binary");
-        ByteBuffer byteBuffer;
-        if (isBinary) {
-          byteBuffer = ByteBuffer.wrap(call.argument("data"));
-        } else {
-            String data = call.argument("data");
-            byteBuffer = ByteBuffer.wrap(data.getBytes(StandardCharsets.UTF_8));
+        Trace.beginSection("FWRTC::methodCall::dataChannelSend::body");
+        try {
+          String peerConnectionId = call.argument("peerConnectionId");
+          String dataChannelId = call.argument("dataChannelId");
+          String type = call.argument("type");
+          Boolean isBinary = type.equals("binary");
+          ByteBuffer byteBuffer;
+          if (isBinary) {
+            byteBuffer = ByteBuffer.wrap(call.argument("data"));
+          } else {
+              String data = call.argument("data");
+              byteBuffer = ByteBuffer.wrap(data.getBytes(StandardCharsets.UTF_8));
+          }
+          Log.d(TAG, "dataChannelSend pcId=" + peerConnectionId + " dcId=" + dataChannelId + " binary=" + isBinary + " size=" + byteBuffer.remaining());
+          dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
+          // Fire-and-forget: no result.success(null) — avoids posting a
+          // null reply back to the main-thread Looper (~28 dispatches/s saved).
+        } finally {
+          Trace.endSection();
         }
-        dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
-        result.success(null);
         break;
       }
       case "dataChannelClose": {
@@ -599,6 +625,13 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         String dataChannelId = call.argument("dataChannelId");
         dataChannelClose(peerConnectionId, dataChannelId);
         result.success(null);
+        break;
+      }
+      case "dataChannelSetBufferedAmountLowThreshold": {
+        String peerConnectionId = call.argument("peerConnectionId");
+        String dataChannelId = call.argument("dataChannelId");
+        Number threshold = call.argument("threshold");
+        dataChannelSetBufferedAmountLowThreshold(peerConnectionId, dataChannelId, threshold != null ? threshold.longValue() : -1, result);
         break;
       }
       case "streamDispose": {
@@ -1124,6 +1157,10 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         });
         break;
       }
+      case "getMainThreadQueueDepth": {
+        result.success(MainThreadQueueDepth.get());
+        break;
+      }
       case "setLogSeverity": {
         //now it's possible to setup logSeverity only via PeerConnectionFactory.initialize method
         //Log.d(TAG, "no implementation for 'setLogSeverity'");
@@ -1137,6 +1174,9 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         }
         result.notImplemented();
         break;
+    }
+    } finally {
+      Trace.endSection();
     }
   }
 
@@ -2228,6 +2268,16 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
       Log.d(TAG, "dataChannelClose() peerConnection is null");
     } else {
       pco.dataChannelClose(dataChannelId);
+    }
+  }
+
+  public void dataChannelSetBufferedAmountLowThreshold(String peerConnectionId, String dataChannelId, long threshold, Result result) {
+    PeerConnectionObserver pco = mPeerConnectionObservers.get(peerConnectionId);
+    if (pco == null || pco.getPeerConnection() == null) {
+      Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() peerConnection is null");
+      resultError("dataChannelSetBufferedAmountLowThreshold", "peerConnection is null", result);
+    } else {
+      pco.dataChannelSetBufferedAmountLowThreshold(dataChannelId, threshold, result);
     }
   }
 

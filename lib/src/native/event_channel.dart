@@ -16,8 +16,15 @@ class FlutterWebRTCEventChannel {
       StreamController.broadcast();
 
   void eventListener(dynamic event) async {
-    final Map<dynamic, dynamic> map = event;
-    handleEvents.add(<String, dynamic>{map['event'] as String: map});
+    if (event is List) {
+      for (final e in event) {
+        final Map<dynamic, dynamic> map = e as Map<dynamic, dynamic>;
+        handleEvents.add(<String, dynamic>{map['event'] as String: map});
+      }
+    } else {
+      final Map<dynamic, dynamic> map = event;
+      handleEvents.add(<String, dynamic>{map['event'] as String: map});
+    }
   }
 
   void errorListener(Object obj) {

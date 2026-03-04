@@ -24,6 +24,12 @@ class WebRTC {
 
   static bool get platformIsWeb => false;
 
+  static Future<int> getMainThreadQueueDepth() async {
+    final result =
+        await _channel.invokeMethod<int>('getMainThreadQueueDepth');
+    return result ?? -1;
+  }
+
   static Future<T?> invokeMethod<T, P>(String methodName,
       [dynamic param]) async {
     await initialize(options: {

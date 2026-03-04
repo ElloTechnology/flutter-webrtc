@@ -8,13 +8,19 @@ environment:
 
 dependencies:
   collection: ^1.17.0
-  dart_webrtc: ^1.7.0
+  dart_webrtc:
+    git:
+      url: git@github.com:ElloTechnology/dart-webrtc.git
+      ref: e7e10095f5eb453eaa445edb43e57f37217abb4f
   flutter:
     sdk: flutter
   logger: ^2.0.2+1
   path_provider: ^2.0.2
   web: ^1.0.0
-  webrtc_interface: ^1.4.0
+  webrtc_interface:
+    git:
+      url: git@github.com:ElloTechnology/webrtc-interface.git
+      ref: 16ff7fcd8455ce239bd6495f138549f5f4f5f7db
 
 dev_dependencies:
   flutter_test:

@@ -29,9 +29,21 @@ class RTCDataChannelNative extends RTCDataChannel {
   final String _peerConnectionId;
   final String _label;
   int _bufferedAmount = 0;
+  int? _bufferedAmountLowThreshold;
+
   @override
   // ignore: overridden_fields
-  int? bufferedAmountLowThreshold;
+  int? get bufferedAmountLowThreshold => _bufferedAmountLowThreshold;
+
+  @override
+  set bufferedAmountLowThreshold(int? value) {
+    _bufferedAmountLowThreshold = value;
+    WebRTC.invokeMethod('dataChannelSetBufferedAmountLowThreshold', {
+      'peerConnectionId': _peerConnectionId,
+      'dataChannelId': _flutterId,
+      'threshold': value ?? -1,
+    });
+  }
 
   /// Id for the datachannel in the Flutter <-> Native layer.
   final String _flutterId;
@@ -60,7 +72,16 @@ class RTCDataChannelNative extends RTCDataChannel {
 
   /// RTCDataChannel event listener.
   void eventListener(dynamic event) {
-    final Map<dynamic, dynamic> map = event;
+    if (event is List) {
+      for (final e in event) {
+        _handleSingleEvent(e as Map<dynamic, dynamic>);
+      }
+    } else {
+      _handleSingleEvent(event as Map<dynamic, dynamic>);
+    }
+  }
+
+  void _handleSingleEvent(Map<dynamic, dynamic> map) {
     switch (map['event']) {
       case 'dataChannelStateChanged':
         _dataChannelId = map['id'];
@@ -71,6 +92,7 @@ class RTCDataChannelNative extends RTCDataChannel {
         break;
       case 'dataChannelReceiveMessage':
         _dataChannelId = map['id'];
+        final t3 = DateTime.now().microsecondsSinceEpoch;
 
         var type = _typeStringToMessageType[map['type']];
         dynamic data = map['data'];
@@ -79,6 +101,20 @@ class RTCDataChannelNative extends RTCDataChannel {
           message = RTCDataChannelMessage.fromBinary(data);
         } else {
           message = RTCDataChannelMessage(data);
+        }
+
+        // Extract pipeline metadata from native layer
+        if (map['_t0_ns'] != null) {
+          message.pipelineMeta = {
+            't0_ns': map['_t0_ns'],
+            't1_ns': map['_t1_ns'],
+            't2_ns': map['_t2_ns'],
+            'raw_size': map['_raw_size'],
+            'queue_depth': map['_queue_depth'],
+            'pending': map['_pending'],
+            'batch_size': map['_batch_size'],
+            't3_us': t3,
+          };
         }
 
         onMessage?.call(message);
@@ -121,8 +157,11 @@ class RTCDataChannelNative extends RTCDataChannel {
   }
 
   @override
-  Future<void> send(RTCDataChannelMessage message) async {
-    await WebRTC.invokeMethod('dataChannelSend', <String, dynamic>{
+  void send(RTCDataChannelMessage message) {
+    // Fire-and-forget: don't await the method channel result.
+    // Native side no longer posts a reply, saving ~28 main-thread
+    // dispatches/s under typical load.
+    WebRTC.invokeMethod('dataChannelSend', <String, dynamic>{
       'peerConnectionId': _peerConnectionId,
       'dataChannelId': _flutterId,
       'type': message.isBinary ? 'binary' : 'text',

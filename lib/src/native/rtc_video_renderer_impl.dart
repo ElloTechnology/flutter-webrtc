@@ -115,7 +115,17 @@ class RTCVideoRenderer extends ValueNotifier<RTCVideoValue>
 
   void eventListener(dynamic event) {
     if (_disposed) return;
-    final Map<dynamic, dynamic> map = event;
+    if (event is List) {
+      for (final e in event) {
+        _handleSingleEvent(e as Map<dynamic, dynamic>);
+      }
+    } else {
+      _handleSingleEvent(event as Map<dynamic, dynamic>);
+    }
+  }
+
+  void _handleSingleEvent(Map<dynamic, dynamic> map) {
+    if (_disposed) return;
     switch (map['event']) {
       case 'didTextureChangeRotation':
         value =

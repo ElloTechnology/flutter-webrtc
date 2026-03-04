@@ -1,5 +1,6 @@
 package com.cloudwebrtc.webrtc;
 
+import android.os.Trace;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -48,6 +49,7 @@ import org.webrtc.VideoTrack;
 class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.StreamHandler {
   private final static String TAG = FlutterWebRTCPlugin.TAG;
   private final Map<String, DataChannel> dataChannels = new HashMap<>();
+  private final Map<String, DataChannelObserver> dataChannelObservers = new HashMap<>();
   private final BinaryMessenger messenger;
   private final String id;
   private PeerConnection peerConnection;
@@ -58,6 +60,18 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
   private final StateProvider stateProvider;
   private final EventChannel eventChannel;
   private EventChannel.EventSink eventSink;
+
+  // Track last dispatched ICE states to suppress duplicate events.
+  // Under high CPU pressure, WebRTC can fire the same state multiple times
+  // (e.g., repeated "checking" during ICE restart). Each dispatch consumes a
+  // main-thread queue slot that competes with data-channel messages — on the
+  // Redmi A5 this was observed clogging the queue and inflating RTT.
+  // By deduplicating at the source we avoid wasting queue capacity on stale
+  // state transitions the Dart side has already processed.
+  private volatile PeerConnection.IceConnectionState lastIceConnectionState = null;
+  private volatile PeerConnection.IceGatheringState lastIceGatheringState = null;
+  private volatile PeerConnection.SignalingState lastSignalingState = null;
+  private volatile PeerConnection.PeerConnectionState lastPeerConnectionState = null;
 
   PeerConnectionObserver(PeerConnection.RTCConfiguration configuration, StateProvider stateProvider, BinaryMessenger messenger, String id) {
     this.configuration = configuration;
@@ -77,7 +91,13 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onListen(Object o, EventChannel.EventSink sink) {
-    eventSink = new AnyThreadSink(sink);
+    Trace.beginSection("FWRTC::PCO::onListen");
+    try {
+      Log.d(TAG, "PCO::onListen thread=" + Thread.currentThread().getName() + " pcId=" + id);
+      eventSink = new AnyThreadSink(sink);
+    } finally {
+      Trace.endSection();
+    }
   }
 
   @Override
@@ -102,6 +122,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     remoteStreams.clear();
     remoteTracks.clear();
     dataChannels.clear();
+    dataChannelObservers.clear();
   }
 
   void dispose() {
@@ -111,61 +132,77 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
   }
 
   void createDataChannel(String label, ConstraintsMap config, Result result) {
-    DataChannel.Init init = new DataChannel.Init();
-    if (config != null) {
-      if (config.hasKey("id")) {
-        init.id = config.getInt("id");
+    Trace.beginSection("FWRTC::PCO::createDataChannel");
+    try {
+      Log.d(TAG, "PCO::createDataChannel thread=" + Thread.currentThread().getName() + " label=" + label);
+      DataChannel.Init init = new DataChannel.Init();
+      if (config != null) {
+        if (config.hasKey("id")) {
+          init.id = config.getInt("id");
+        }
+        if (config.hasKey("ordered")) {
+          init.ordered = config.getBoolean("ordered");
+        }
+        if (config.hasKey("maxRetransmits")) {
+          init.maxRetransmits = config.getInt("maxRetransmits");
+        }
+        if (config.hasKey("protocol")) {
+          init.protocol = config.getString("protocol");
+        }
+        if (config.hasKey("negotiated")) {
+          init.negotiated = config.getBoolean("negotiated");
+        }
       }
-      if (config.hasKey("ordered")) {
-        init.ordered = config.getBoolean("ordered");
-      }
-      if (config.hasKey("maxRetransmits")) {
-        init.maxRetransmits = config.getInt("maxRetransmits");
-      }
-      if (config.hasKey("protocol")) {
-        init.protocol = config.getString("protocol");
-      }
-      if (config.hasKey("negotiated")) {
-        init.negotiated = config.getBoolean("negotiated");
-      }
-    }
-    DataChannel dataChannel = peerConnection.createDataChannel(label, init);
-    // XXX RTP data channels are not defined by the WebRTC standard, have
-    // been deprecated in Chromium, and Google have decided (in 2015) to no
-    // longer support them (in the face of multiple reported issues of
-    // breakages).
-    String flutterId = getNextDataChannelUUID();
-    if (dataChannel != null) {
-      dataChannels.put(flutterId, dataChannel);
-      registerDataChannelObserver(flutterId, dataChannel);
+      DataChannel dataChannel = peerConnection.createDataChannel(label, init);
+      String flutterId = getNextDataChannelUUID();
+      if (dataChannel != null) {
+        dataChannels.put(flutterId, dataChannel);
+        registerDataChannelObserver(flutterId, dataChannel);
 
-      ConstraintsMap params = new ConstraintsMap();
-      params.putInt("id", dataChannel.id());
-      params.putString("label", dataChannel.label());
-      params.putString("flutterId", flutterId);
-      result.success(params.toMap());
-    } else {
-      resultError("createDataChannel", "Can't create data-channel for id: " + init.id, result);
+        ConstraintsMap params = new ConstraintsMap();
+        params.putInt("id", dataChannel.id());
+        params.putString("label", dataChannel.label());
+        params.putString("flutterId", flutterId);
+        Log.d(TAG, "PCO::createDataChannel SUCCESS dcId=" + dataChannel.id() + " flutterId=" + flutterId);
+        result.success(params.toMap());
+      } else {
+        resultError("createDataChannel", "Can't create data-channel for id: " + init.id, result);
+      }
+    } finally {
+      Trace.endSection();
     }
   }
 
   void dataChannelClose(String dataChannelId) {
-    DataChannel dataChannel = dataChannels.get(dataChannelId);
-    if (dataChannel != null) {
-      dataChannel.close();
-      dataChannels.remove(dataChannelId);
-    } else {
-      Log.d(TAG, "dataChannelClose() dataChannel is null");
+    Trace.beginSection("FWRTC::PCO::dataChannelClose");
+    try {
+      Log.d(TAG, "PCO::dataChannelClose thread=" + Thread.currentThread().getName() + " dcId=" + dataChannelId);
+      DataChannel dataChannel = dataChannels.get(dataChannelId);
+      if (dataChannel != null) {
+        dataChannel.close();
+        dataChannels.remove(dataChannelId);
+        dataChannelObservers.remove(dataChannelId);
+      } else {
+        Log.d(TAG, "dataChannelClose() dataChannel is null");
+      }
+    } finally {
+      Trace.endSection();
     }
   }
 
   void dataChannelSend(String dataChannelId, ByteBuffer byteBuffer, Boolean isBinary) {
-    DataChannel dataChannel = dataChannels.get(dataChannelId);
-    if (dataChannel != null) {
-      DataChannel.Buffer buffer = new DataChannel.Buffer(byteBuffer, isBinary);
-      dataChannel.send(buffer);
-    } else {
-      Log.d(TAG, "dataChannelSend() dataChannel is null");
+    Trace.beginSection("FWRTC::PCO::dataChannelSend");
+    try {
+      DataChannel dataChannel = dataChannels.get(dataChannelId);
+      if (dataChannel != null) {
+        Log.d(TAG, "PCO::dataChannelSend thread=" + Thread.currentThread().getName() + " dcId=" + dataChannel.id() + " binary=" + isBinary + " size=" + byteBuffer.remaining() + " bufferedAmount=" + dataChannel.bufferedAmount());
+        DataChannel.Buffer buffer = new DataChannel.Buffer(byteBuffer, isBinary);
+        dataChannel.send(buffer);
+      } else {
+        Log.d(TAG, "dataChannelSend() dataChannel is null");
+      }
+    } finally {
+      Trace.endSection();
     }
   }
 
@@ -178,6 +215,17 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     } else {
       Log.d(TAG, "dataChannelGetBufferedAmount() dataChannel is null");
       resultError("dataChannelGetBufferedAmount", "DataChannel is null", result);
+    }
+  }
+
+  void dataChannelSetBufferedAmountLowThreshold(String dataChannelId, long threshold, Result result) {
+    DataChannelObserver observer = dataChannelObservers.get(dataChannelId);
+    if (observer != null) {
+      observer.setBufferedAmountLowThreshold(threshold);
+      result.success(null);
+    } else {
+      Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() observer is null for dcId=" + dataChannelId);
+      resultError("dataChannelSetBufferedAmountLowThreshold", "DataChannelObserver not found", result);
     }
   }
 
@@ -345,10 +393,27 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
-    ConstraintsMap params = new ConstraintsMap();
-    params.putString("event", "iceConnectionState");
-    params.putString("state", Utils.iceConnectionStateString(iceConnectionState));
-    sendEvent(params);
+    Trace.beginSection("FWRTC::PCO::onIceConnectionChange");
+    try {
+      // Skip duplicate ICE connection state events. WebRTC can fire the same
+      // state repeatedly (e.g., multiple "checking" callbacks during an ICE
+      // restart). Each event costs a main-thread dispatch via AnyThreadSink;
+      // under CPU pressure these redundant dispatches compete with data-channel
+      // messages for queue capacity, inflating RTT on low-end devices.
+      if (iceConnectionState == lastIceConnectionState) {
+        Log.d(TAG, "PCO::onIceConnectionChange SKIPPED duplicate state=" + iceConnectionState.name());
+        return;
+      }
+      lastIceConnectionState = iceConnectionState;
+
+      Log.d(TAG, "PCO::onIceConnectionChange thread=" + Thread.currentThread().getName() + " state=" + iceConnectionState.name());
+      ConstraintsMap params = new ConstraintsMap();
+      params.putString("event", "iceConnectionState");
+      params.putString("state", Utils.iceConnectionStateString(iceConnectionState));
+      sendEvent(params);
+    } finally {
+      Trace.endSection();
+    }
   }
 
   @Override
@@ -362,6 +427,14 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onIceGatheringChange(PeerConnection.IceGatheringState iceGatheringState) {
+    // Same deduplication as onIceConnectionChange — skip repeated gathering
+    // states to avoid unnecessary main-thread dispatches.
+    if (iceGatheringState == lastIceGatheringState) {
+      Log.d(TAG, "onIceGatheringChange SKIPPED duplicate state=" + iceGatheringState.name());
+      return;
+    }
+    lastIceGatheringState = iceGatheringState;
+
     Log.d(TAG, "onIceGatheringChange" + iceGatheringState.name());
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "iceGatheringState");
@@ -448,8 +521,13 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
   }
 
   void sendEvent(ConstraintsMap event) {
-    if (eventSink != null) {
-      eventSink.success(event.toMap());
+    Trace.beginSection("FWRTC::PCO::sendEvent");
+    try {
+      if (eventSink != null) {
+        eventSink.success(event.toMap());
+      }
+    } finally {
+      Trace.endSection();
     }
   }
 
@@ -555,49 +633,90 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onDataChannel(DataChannel dataChannel) {
-    String flutterId = getNextDataChannelUUID();
-    ConstraintsMap params = new ConstraintsMap();
-    params.putString("event", "didOpenDataChannel");
-    params.putInt("id", dataChannel.id());
-    params.putString("label", dataChannel.label());
-    params.putString("flutterId", flutterId);
+    Trace.beginSection("FWRTC::PCO::onDataChannel");
+    try {
+      Log.d(TAG, "PCO::onDataChannel thread=" + Thread.currentThread().getName() + " dcId=" + dataChannel.id() + " label=" + dataChannel.label());
+      String flutterId = getNextDataChannelUUID();
+      ConstraintsMap params = new ConstraintsMap();
+      params.putString("event", "didOpenDataChannel");
+      params.putInt("id", dataChannel.id());
+      params.putString("label", dataChannel.label());
+      params.putString("flutterId", flutterId);
 
-    dataChannels.put(flutterId, dataChannel);
-    registerDataChannelObserver(flutterId, dataChannel);
+      dataChannels.put(flutterId, dataChannel);
+      registerDataChannelObserver(flutterId, dataChannel);
 
-    sendEvent(params);
+      sendEvent(params);
+    } finally {
+      Trace.endSection();
+    }
   }
 
   private void registerDataChannelObserver(String dcId, DataChannel dataChannel) {
     // DataChannel.registerObserver implementation does not allow to
     // unregister, so the observer is registered here and is never
     // unregistered
-    dataChannel.registerObserver(
-        new DataChannelObserver(messenger, id, dcId, dataChannel));
+    DataChannelObserver observer = new DataChannelObserver(messenger, id, dcId, dataChannel);
+    dataChannelObservers.put(dcId, observer);
+    dataChannel.registerObserver(observer);
   }
 
   @Override
   public void onRenegotiationNeeded() {
-    ConstraintsMap params = new ConstraintsMap();
-    params.putString("event", "onRenegotiationNeeded");
-    sendEvent(params);
+    Trace.beginSection("FWRTC::PCO::onRenegotiationNeeded");
+    try {
+      Log.d(TAG, "PCO::onRenegotiationNeeded thread=" + Thread.currentThread().getName());
+      ConstraintsMap params = new ConstraintsMap();
+      params.putString("event", "onRenegotiationNeeded");
+      sendEvent(params);
+    } finally {
+      Trace.endSection();
+    }
   }
 
   @Override
   public void onSignalingChange(PeerConnection.SignalingState signalingState) {
-    ConstraintsMap params = new ConstraintsMap();
-    params.putString("event", "signalingState");
-    params.putString("state", Utils.signalingStateString(signalingState));
-    sendEvent(params);
+    Trace.beginSection("FWRTC::PCO::onSignalingChange");
+    try {
+      // Deduplicate — same rationale as ICE state deduplication.
+      // Signaling state can repeat during rapid offer/answer cycles
+      // (e.g., multiple renegotiations triggered in quick succession).
+      if (signalingState == lastSignalingState) {
+        Log.d(TAG, "PCO::onSignalingChange SKIPPED duplicate state=" + signalingState.name());
+        return;
+      }
+      lastSignalingState = signalingState;
+
+      Log.d(TAG, "PCO::onSignalingChange thread=" + Thread.currentThread().getName() + " state=" + signalingState.name());
+      ConstraintsMap params = new ConstraintsMap();
+      params.putString("event", "signalingState");
+      params.putString("state", Utils.signalingStateString(signalingState));
+      sendEvent(params);
+    } finally {
+      Trace.endSection();
+    }
   }
 
   @Override
   public void onConnectionChange(PeerConnection.PeerConnectionState connectionState) {
-    Log.d(TAG, "onConnectionChange" + connectionState.name());
-    ConstraintsMap params = new ConstraintsMap();
-    params.putString("event", "peerConnectionState");
-    params.putString("state", Utils.connectionStateString(connectionState));
-    sendEvent(params);
+    Trace.beginSection("FWRTC::PCO::onConnectionChange");
+    try {
+      // Deduplicate — peerConnectionState mirrors ICE + DTLS state and can
+      // fire repeatedly with the same value during reconnection attempts.
+      if (connectionState == lastPeerConnectionState) {
+        Log.d(TAG, "PCO::onConnectionChange SKIPPED duplicate state=" + connectionState.name());
+        return;
+      }
+      lastPeerConnectionState = connectionState;
+
+      Log.d(TAG, "PCO::onConnectionChange thread=" + Thread.currentThread().getName() + " state=" + connectionState.name());
+      ConstraintsMap params = new ConstraintsMap();
+      params.putString("event", "peerConnectionState");
+      params.putString("state", Utils.connectionStateString(connectionState));
+      sendEvent(params);
+    } finally {
+      Trace.endSection();
+    }
   }
 
   @Nullable
