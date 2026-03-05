@@ -589,8 +589,6 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             byteBuffer = ByteBuffer.wrap(data.getBytes(StandardCharsets.UTF_8));
         }
         dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
-        // Fire-and-forget: no result.success(null) — avoids posting a
-        // null reply back to the main-thread Looper (~28 dispatches/s saved).
         break;
       }
       case "dataChannelClose": {
