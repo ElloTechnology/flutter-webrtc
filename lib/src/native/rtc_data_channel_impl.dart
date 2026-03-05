@@ -143,6 +143,8 @@ class RTCDataChannelNative extends RTCDataChannel {
 
   @override
   void send(RTCDataChannelMessage message) {
+    // Fire-and-forget: don't await the method channel result.
+    // Native side has no reply to post, saving main-thread dispatches.
     WebRTC.invokeMethod('dataChannelSend', <String, dynamic>{
       'peerConnectionId': _peerConnectionId,
       'dataChannelId': _flutterId,
