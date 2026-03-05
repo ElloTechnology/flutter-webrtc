@@ -36,6 +36,11 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         }
     }
 
+    // The coalescing below is O(k × n²) where k = number of coalesced event types
+    // and n = batch size, because ArrayList.iterator().remove() shifts elements.
+    // This local expense is intentional: it prevents per-event main-thread dispatches.
+    // The cost of k separate handler.post() round-trips to the main-thread looper
+    // greatly outweighs the local iteration cost for the small batches seen in practice.
     private void drain() {
         // reset FIRST so new arrivals can schedule
         drainScheduled.set(false);
