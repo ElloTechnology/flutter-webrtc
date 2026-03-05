@@ -56,7 +56,8 @@ class _DataChannelLoopBackSampleState extends State<DataChannelLoopBackSample> {
                 '\ndataChannel2: Received message: ${data.text}, bufferedAmount: $bufferedAmount';
           });
 
-          await _dataChannel2!.send(RTCDataChannelMessage(
+          // Fire-and-forget: send is intentionally not awaited (see rtc_data_channel_impl.dart).
+          _dataChannel2!.send(RTCDataChannelMessage(
               '(dataChannel2 ==> dataChannel1) Hello from dataChannel2 echo !!!'));
         };
       };
@@ -66,6 +67,7 @@ class _DataChannelLoopBackSampleState extends State<DataChannelLoopBackSample> {
           _dataChannel1Status += '\ndataChannel1: state: ${state.toString()}';
         });
         if (state == RTCDataChannelState.RTCDataChannelOpen) {
+          // Fire-and-forget: send is intentionally not awaited (see rtc_data_channel_impl.dart).
           _dataChannel1!.send(RTCDataChannelMessage(
               '(dataChannel1 ==> dataChannel2) Hello from dataChannel1 !!!'));
         }

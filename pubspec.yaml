@@ -17,10 +17,7 @@ dependencies:
   logger: ^2.0.2+1
   path_provider: ^2.0.2
   web: ^1.0.0
-  webrtc_interface:
-    git:
-      url: git@github.com:ElloTechnology/webrtc-interface.git
-      ref: 16ff7fcd8455ce239bd6495f138549f5f4f5f7db
+  webrtc_interface: 1.4.0
 
 dev_dependencies:
   flutter_test:
