@@ -4,6 +4,20 @@ import 'package:flutter/services.dart';
 
 import '../native_logs_listener.dart';
 
+/// Unwraps a possibly-batched platform channel event and calls [handler]
+/// for each individual event map. The native side may send a single Map
+/// or a List of Maps when batching is enabled.
+void forEachBatchedEvent(
+    dynamic event, void Function(Map<dynamic, dynamic>) handler) {
+  if (event is List) {
+    for (final e in event) {
+      handler(e as Map<dynamic, dynamic>);
+    }
+  } else {
+    handler(event as Map<dynamic, dynamic>);
+  }
+}
+
 class WebRTC {
   static const MethodChannel _channel = MethodChannel('FlutterWebRTC.Method');
 
