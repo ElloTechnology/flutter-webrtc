@@ -118,13 +118,7 @@ class RTCVideoPlatformViewController extends ValueNotifier<RTCVideoValue>
 
   void eventListener(dynamic event) {
     if (_disposed) return;
-    if (event is List) {
-      for (final e in event) {
-        _handleSingleEvent(e as Map<dynamic, dynamic>);
-      }
-    } else {
-      _handleSingleEvent(event as Map<dynamic, dynamic>);
-    }
+    forEachBatchedEvent(event, _handleSingleEvent);
   }
 
   void _handleSingleEvent(Map<dynamic, dynamic> map) {

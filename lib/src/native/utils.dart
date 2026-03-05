@@ -38,6 +38,8 @@ class WebRTC {
 
   static bool get platformIsWeb => false;
 
+  static const StandardMethodCodec _codec = StandardMethodCodec();
+
   static Future<T?> invokeMethod<T, P>(String methodName,
       [dynamic param]) async {
     await initialize(options: {
@@ -47,6 +49,18 @@ class WebRTC {
     return _channel.invokeMethod<T>(
       methodName,
       param,
+    );
+  }
+
+  /// Fire-and-forget: sends a method call to the native side without
+  /// registering a reply handler. No Future is created, no reply is
+  /// expected, and no memory is leaked. The native side must NOT call
+  /// result.success/error (there is no result to complete).
+  static void invokeMethodFireAndForget(String methodName,
+      [dynamic param]) {
+    ServicesBinding.instance.defaultBinaryMessenger.send(
+      'FlutterWebRTC.Method',
+      _codec.encodeMethodCall(MethodCall(methodName, param)),
     );
   }
 

@@ -251,15 +251,8 @@ class FrameCryptorImpl extends FrameCryptor {
     }
   }
 
-  void eventListener(dynamic event) {
-    if (event is List) {
-      for (final e in event) {
-        _handleSingleEvent(e as Map<dynamic, dynamic>);
-      }
-    } else {
-      _handleSingleEvent(event as Map<dynamic, dynamic>);
-    }
-  }
+  void eventListener(dynamic event) =>
+      forEachBatchedEvent(event, _handleSingleEvent);
 
   void _handleSingleEvent(Map<dynamic, dynamic> map) {
     switch (map['event']) {

@@ -71,15 +71,8 @@ class RTCDataChannelNative extends RTCDataChannel {
       StreamController<RTCDataChannelMessage>.broadcast(sync: true);
 
   /// RTCDataChannel event listener.
-  void eventListener(dynamic event) {
-    if (event is List) {
-      for (final e in event) {
-        _handleSingleEvent(e as Map<dynamic, dynamic>);
-      }
-    } else {
-      _handleSingleEvent(event as Map<dynamic, dynamic>);
-    }
-  }
+  void eventListener(dynamic event) =>
+      forEachBatchedEvent(event, _handleSingleEvent);
 
   void _handleSingleEvent(Map<dynamic, dynamic> map) {
     switch (map['event']) {
@@ -143,11 +136,11 @@ class RTCDataChannelNative extends RTCDataChannel {
 
   @override
   Future<void> send(RTCDataChannelMessage message) {
-    // Fire-and-forget: we intentionally don't await the platform channel call.
-    // The native side performs the send synchronously and has no meaningful
-    // result to return, so awaiting would only add unnecessary main-thread
-    // round-trips and block the caller.
-    WebRTC.invokeMethod('dataChannelSend', <String, dynamic>{
+    // Fire-and-forget: uses BinaryMessenger.send() directly to avoid
+    // registering a reply handler. The native side performs the send
+    // synchronously and has no result to return — no reply handler means
+    // no leaked Futures and no main-thread dispatch cost.
+    WebRTC.invokeMethodFireAndForget('dataChannelSend', <String, dynamic>{
       'peerConnectionId': _peerConnectionId,
       'dataChannelId': _flutterId,
       'type': message.isBinary ? 'binary' : 'text',

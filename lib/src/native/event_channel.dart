@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import 'utils.dart';
+
 class FlutterWebRTCEventChannel {
   FlutterWebRTCEventChannel._internal() {
     EventChannel('FlutterWebRTC.Event')
@@ -16,15 +18,9 @@ class FlutterWebRTCEventChannel {
       StreamController.broadcast();
 
   void eventListener(dynamic event) async {
-    if (event is List) {
-      for (final e in event) {
-        final Map<dynamic, dynamic> map = e as Map<dynamic, dynamic>;
-        handleEvents.add(<String, dynamic>{map['event'] as String: map});
-      }
-    } else {
-      final Map<dynamic, dynamic> map = event;
+    forEachBatchedEvent(event, (map) {
       handleEvents.add(<String, dynamic>{map['event'] as String: map});
-    }
+    });
   }
 
   void errorListener(Object obj) {
