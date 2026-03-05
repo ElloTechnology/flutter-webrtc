@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.os.Bundle;
-import android.os.Trace;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -72,14 +71,8 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
-        Trace.beginSection("FWRTC::Plugin::onAttachedToEngine");
-        try {
-            Log.d(TAG, "FlutterWebRTCPlugin::onAttachedToEngine thread=" + Thread.currentThread().getName());
-            startListening(binding.getApplicationContext(), binding.getBinaryMessenger(),
-                    binding.getTextureRegistry());
-        } finally {
-            Trace.endSection();
-        }
+        startListening(binding.getApplicationContext(), binding.getBinaryMessenger(),
+                binding.getTextureRegistry());
     }
 
     @Override
@@ -119,25 +112,19 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
 
     private void startListening(final Context context, BinaryMessenger messenger,
                                 TextureRegistry textureRegistry) {
-        Trace.beginSection("FWRTC::Plugin::startListening");
-        try {
-            Log.d(TAG, "FlutterWebRTCPlugin::startListening thread=" + Thread.currentThread().getName());
-            AudioSwitchManager.instance = new AudioSwitchManager(context);
-            methodCallHandler = new MethodCallHandlerImpl(context, messenger, textureRegistry);
-            methodChannel = new MethodChannel(messenger, "FlutterWebRTC.Method");
-            methodChannel.setMethodCallHandler(methodCallHandler);
-            eventChannel = new EventChannel( messenger,"FlutterWebRTC.Event");
-            eventChannel.setStreamHandler(this);
-            AudioSwitchManager.instance.audioDeviceChangeListener = (devices, currentDevice) -> {
-                Log.w(TAG, "audioFocusChangeListener " + devices+ " " + currentDevice);
-                ConstraintsMap params = new ConstraintsMap();
-                params.putString("event", "onDeviceChange");
-                sendEvent(params.toMap());
-                return null;
-            };
-        } finally {
-            Trace.endSection();
-        }
+        AudioSwitchManager.instance = new AudioSwitchManager(context);
+        methodCallHandler = new MethodCallHandlerImpl(context, messenger, textureRegistry);
+        methodChannel = new MethodChannel(messenger, "FlutterWebRTC.Method");
+        methodChannel.setMethodCallHandler(methodCallHandler);
+        eventChannel = new EventChannel( messenger,"FlutterWebRTC.Event");
+        eventChannel.setStreamHandler(this);
+        AudioSwitchManager.instance.audioDeviceChangeListener = (devices, currentDevice) -> {
+            Log.w(TAG, "audioFocusChangeListener " + devices+ " " + currentDevice);
+            ConstraintsMap params = new ConstraintsMap();
+            params.putString("event", "onDeviceChange");
+            sendEvent(params.toMap());
+            return null;
+        };
     }
 
     private void stopListening() {
@@ -153,13 +140,7 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
 
     @Override
     public void onListen(Object arguments, EventChannel.EventSink events) {
-        Trace.beginSection("FWRTC::Plugin::onListen");
-        try {
-            Log.d(TAG, "FlutterWebRTCPlugin::onListen thread=" + Thread.currentThread().getName());
-            eventSink = new AnyThreadSink(events);
-        } finally {
-            Trace.endSection();
-        }
+        eventSink = new AnyThreadSink(events);
     }
     @Override
     public void onCancel(Object arguments) {
@@ -167,13 +148,8 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
     }
 
     public void sendEvent(Object event) {
-        Trace.beginSection("FWRTC::Plugin::sendEvent");
-        try {
-            if(eventSink != null) {
-                eventSink.success(event);
-            }
-        } finally {
-            Trace.endSection();
+        if(eventSink != null) {
+            eventSink.success(event);
         }
     }
 

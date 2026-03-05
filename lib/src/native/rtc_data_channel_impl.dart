@@ -92,7 +92,6 @@ class RTCDataChannelNative extends RTCDataChannel {
         break;
       case 'dataChannelReceiveMessage':
         _dataChannelId = map['id'];
-        final t3 = DateTime.now().microsecondsSinceEpoch;
 
         var type = _typeStringToMessageType[map['type']];
         dynamic data = map['data'];
@@ -101,20 +100,6 @@ class RTCDataChannelNative extends RTCDataChannel {
           message = RTCDataChannelMessage.fromBinary(data);
         } else {
           message = RTCDataChannelMessage(data);
-        }
-
-        // Extract pipeline metadata from native layer
-        if (map['_t0_ns'] != null) {
-          message.pipelineMeta = {
-            't0_ns': map['_t0_ns'],
-            't1_ns': map['_t1_ns'],
-            't2_ns': map['_t2_ns'],
-            'raw_size': map['_raw_size'],
-            'queue_depth': map['_queue_depth'],
-            'pending': map['_pending'],
-            'batch_size': map['_batch_size'],
-            't3_us': t3,
-          };
         }
 
         onMessage?.call(message);

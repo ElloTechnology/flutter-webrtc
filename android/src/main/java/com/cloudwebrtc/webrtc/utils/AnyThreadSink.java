@@ -2,35 +2,16 @@ package com.cloudwebrtc.webrtc.utils;
 
 import android.os.Handler;
 import android.os.Looper;
-import android.os.Trace;
-import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import io.flutter.plugin.common.EventChannel;
 
 public final class AnyThreadSink implements EventChannel.EventSink {
-    private static final String TAG = "FWRTC-Profile";
-
-    // Per-category queue instrumentation counters
-    private static final AtomicInteger pendingCount = new AtomicInteger(0);
-    private static final AtomicLong dispatchedCount = new AtomicLong(0);
-    private static final AtomicLong totalDispatchNanos = new AtomicLong(0);
-
-    /** Returns a snapshot of [pending, dispatched, totalDispatchNanos]. */
-    public static long[] snapshot() {
-        return new long[]{
-            pendingCount.get(),
-            dispatchedCount.get(),
-            totalDispatchNanos.get()
-        };
-    }
 
     final private EventChannel.EventSink eventSink;
     final private Handler handler = new Handler(Looper.getMainLooper());
@@ -43,35 +24,15 @@ public final class AnyThreadSink implements EventChannel.EventSink {
 
     @Override
     public void success(Object o) {
-        Trace.beginSection("FWRTC::AnyThreadSink::success");
-        try {
-            // Capture t1 (enqueue time) for pipeline-instrumented messages
-            if (o instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> map = (Map<String, Object>) o;
-                if (map.containsKey("_t0_ns")) {
-                    map.put("_t1_ns", System.nanoTime());
-                    map.put("_pending", (long) pendingCount.get());
-                }
+        if (Looper.getMainLooper() == Looper.myLooper()) {
+            // Main-thread fast path: deliver inline
+            eventSink.success(o);
+        } else {
+            // Off-thread: enqueue and CAS-guard a single drain post
+            eventQueue.offer(o);
+            if (drainScheduled.compareAndSet(false, true)) {
+                handler.post(this::drain);
             }
-
-            if (Looper.getMainLooper() == Looper.myLooper()) {
-                // Main-thread fast path: deliver inline
-                long t0 = System.nanoTime();
-                eventSink.success(o);
-                long elapsed = System.nanoTime() - t0;
-                dispatchedCount.incrementAndGet();
-                totalDispatchNanos.addAndGet(elapsed);
-            } else {
-                // Off-thread: enqueue and CAS-guard a single drain post
-                eventQueue.offer(o);
-                pendingCount.incrementAndGet();
-                if (drainScheduled.compareAndSet(false, true)) {
-                    handler.post(this::drain);
-                }
-            }
-        } finally {
-            Trace.endSection();
         }
     }
 
@@ -86,8 +47,6 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         }
 
         if (batch.isEmpty()) return;
-
-        int originalSize = batch.size();
 
         // Coalesce state-machine events: if the batch contains multiple events
         // of the same state type, only the latest matters — intermediate states
@@ -115,30 +74,6 @@ public final class AnyThreadSink implements EventChannel.EventSink {
             coalesceByEventType(batch, "onRenegotiationNeeded");
         }
 
-        int coalesced = originalSize - batch.size();
-        pendingCount.addAndGet(-originalSize);
-
-        if (coalesced > 0) {
-            Log.d(TAG, "AnyThreadSink::drain coalesced " + coalesced + " state events (batch " + originalSize + " -> " + batch.size() + ")");
-        }
-
-        // Read queue depth once per drain cycle (same Looper frame)
-        int queueDepth = MainThreadQueueDepth.get();
-
-        // Stamp per-message metadata
-        for (Object item : batch) {
-            if (item instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> map = (Map<String, Object>) item;
-                if (map.containsKey("_t0_ns")) {
-                    map.put("_t2_ns", System.nanoTime());
-                    map.put("_queue_depth", queueDepth);
-                    map.put("_batch_size", batch.size());
-                }
-            }
-        }
-
-        long t0 = System.nanoTime();
         if (batch.size() == 1) {
             // Single event: send unbatched (backward compat)
             eventSink.success(batch.get(0));
@@ -146,9 +81,6 @@ public final class AnyThreadSink implements EventChannel.EventSink {
             // Multiple events: single platform channel crossing
             eventSink.success(batch);
         }
-        long elapsed = System.nanoTime() - t0;
-        dispatchedCount.addAndGet(batch.size());
-        totalDispatchNanos.addAndGet(elapsed);
     }
 
     /**
@@ -198,52 +130,19 @@ public final class AnyThreadSink implements EventChannel.EventSink {
 
     @Override
     public void error(String s, String s1, Object o) {
-        Trace.beginSection("FWRTC::AnyThreadSink::error");
-        try {
-            post(() -> {
-                Trace.beginSection("FWRTC::AnyThreadSink::error::mainThread");
-                try {
-                    eventSink.error(s, s1, o);
-                } finally {
-                    Trace.endSection();
-                }
-            });
-        } finally {
-            Trace.endSection();
-        }
+        post(() -> eventSink.error(s, s1, o));
     }
 
     @Override
     public void endOfStream() {
-        post(() -> {
-            Trace.beginSection("FWRTC::AnyThreadSink::endOfStream::mainThread");
-            try {
-                eventSink.endOfStream();
-            } finally {
-                Trace.endSection();
-            }
-        });
+        post(() -> eventSink.endOfStream());
     }
 
     private void post(Runnable r) {
         if(Looper.getMainLooper() == Looper.myLooper()){
-            Log.d(TAG, "AnyThreadSink::post already on main thread, running inline");
-            long t0 = System.nanoTime();
             r.run();
-            long elapsed = System.nanoTime() - t0;
-            dispatchedCount.incrementAndGet();
-            totalDispatchNanos.addAndGet(elapsed);
         }else{
-            Log.d(TAG, "AnyThreadSink::post from thread=" + Thread.currentThread().getName() + " -> posting to main thread");
-            pendingCount.incrementAndGet();
-            handler.post(() -> {
-                pendingCount.decrementAndGet();
-                long t0 = System.nanoTime();
-                r.run();
-                long elapsed = System.nanoTime() - t0;
-                dispatchedCount.incrementAndGet();
-                totalDispatchNanos.addAndGet(elapsed);
-            });
+            handler.post(r);
         }
     }
 }
