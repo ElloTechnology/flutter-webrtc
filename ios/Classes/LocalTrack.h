@@ -1,7 +1,1 @@
-#import <Foundation/Foundation.h>
-
-@protocol LocalTrack <NSObject>
-
-- (RTCMediaStreamTrack*)track;
-
-@end
+../../common/darwin/Classes/LocalTrack.h
