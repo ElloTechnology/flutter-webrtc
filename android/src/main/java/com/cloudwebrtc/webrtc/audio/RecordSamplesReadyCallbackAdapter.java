@@ -2,33 +2,28 @@ package com.cloudwebrtc.webrtc.audio;
 
 import org.webrtc.audio.JavaAudioDeviceModule;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class RecordSamplesReadyCallbackAdapter
         implements JavaAudioDeviceModule.SamplesReadyCallback {
     public RecordSamplesReadyCallbackAdapter() {}
 
-    List<JavaAudioDeviceModule.SamplesReadyCallback> callbacks = new ArrayList<>();
+    // CopyOnWriteArrayList for lock-free iteration on the audio recording thread
+    // (onWebRtcAudioRecordSamplesReady), while callbacks are added/removed infrequently.
+    final CopyOnWriteArrayList<JavaAudioDeviceModule.SamplesReadyCallback> callbacks = new CopyOnWriteArrayList<>();
 
     public void addCallback(JavaAudioDeviceModule.SamplesReadyCallback callback) {
-        synchronized (callbacks) {
-            callbacks.add(callback);
-        }
+        callbacks.add(callback);
     }
 
     public void removeCallback(JavaAudioDeviceModule.SamplesReadyCallback callback) {
-        synchronized (callbacks) {
-            callbacks.remove(callback);
-        }
+        callbacks.remove(callback);
     }
 
     @Override
     public void onWebRtcAudioRecordSamplesReady(JavaAudioDeviceModule.AudioSamples audioSamples) {
-        synchronized (callbacks) {
-            for (JavaAudioDeviceModule.SamplesReadyCallback callback : callbacks) {
-                callback.onWebRtcAudioRecordSamplesReady(audioSamples);
-            }
+        for (JavaAudioDeviceModule.SamplesReadyCallback callback : callbacks) {
+            callback.onWebRtcAudioRecordSamplesReady(audioSamples);
         }
     }
 }

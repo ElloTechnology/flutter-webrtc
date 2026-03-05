@@ -3,8 +3,7 @@ package com.cloudwebrtc.webrtc.audio;
 import org.webrtc.ExternalAudioProcessingFactory;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class AudioProcessingAdapter implements ExternalAudioProcessingFactory.AudioProcessing {
     public interface ExternalAudioFrameProcessing {
@@ -16,44 +15,37 @@ public class AudioProcessingAdapter implements ExternalAudioProcessingFactory.Au
     }
 
     public AudioProcessingAdapter() {}
-    List<ExternalAudioFrameProcessing> audioProcessors = new ArrayList<>();
+
+    // CopyOnWriteArrayList for lock-free iteration on the audio processing thread
+    // (process is called on every audio frame), while processors are added/removed infrequently.
+    final CopyOnWriteArrayList<ExternalAudioFrameProcessing> audioProcessors = new CopyOnWriteArrayList<>();
 
     public void addProcessor(ExternalAudioFrameProcessing audioProcessor) {
-        synchronized (audioProcessors) {
-            audioProcessors.add(audioProcessor);
-        }
+        audioProcessors.add(audioProcessor);
     }
 
     public void removeProcessor(ExternalAudioFrameProcessing audioProcessor) {
-        synchronized (audioProcessors) {
-            audioProcessors.remove(audioProcessor);
-        }
+        audioProcessors.remove(audioProcessor);
     }
 
     @Override
     public void initialize(int sampleRateHz, int numChannels) {
-        synchronized (audioProcessors) {
-            for (ExternalAudioFrameProcessing audioProcessor : audioProcessors) {
-                audioProcessor.initialize(sampleRateHz, numChannels);
-            }
+        for (ExternalAudioFrameProcessing audioProcessor : audioProcessors) {
+            audioProcessor.initialize(sampleRateHz, numChannels);
         }
     }
 
     @Override
     public void reset(int newRate) {
-        synchronized (audioProcessors) {
-            for (ExternalAudioFrameProcessing audioProcessor : audioProcessors) {
-                audioProcessor.reset(newRate);
-            }
+        for (ExternalAudioFrameProcessing audioProcessor : audioProcessors) {
+            audioProcessor.reset(newRate);
         }
     }
 
     @Override
     public void process(int numBands, int numFrames, ByteBuffer buffer) {
-        synchronized (audioProcessors) {
-            for (ExternalAudioFrameProcessing audioProcessor : audioProcessors) {
-                audioProcessor.process(numBands, numFrames, buffer);
-            }
+        for (ExternalAudioFrameProcessing audioProcessor : audioProcessors) {
+            audioProcessor.process(numBands, numFrames, buffer);
         }
     }
 }
