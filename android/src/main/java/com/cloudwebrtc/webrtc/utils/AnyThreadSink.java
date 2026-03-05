@@ -49,6 +49,13 @@ public final class AnyThreadSink implements EventChannel.EventSink {
 
         if (batch.isEmpty()) return;
 
+        if (batch.size() == 1) {
+            // Single event: send unbatched
+            eventSink.success(batch.get(0));
+
+            return;
+        }
+
         // Coalesce state-machine events: if the batch contains multiple events
         // of the same state type, only the latest matters — intermediate states
         // are already stale by the time the batch reaches Dart. This is safe
@@ -60,27 +67,20 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         //     that consume main-thread queue slots needed for data-channel messages
         // Note: ICE *candidates* (onCandidate) are NOT coalesced — each candidate
         // is unique and required for connectivity establishment.
-        if (batch.size() > 1) {
-            coalesceByEventType(batch, "iceConnectionState");
-            coalesceByEventType(batch, "iceGatheringState");
-            coalesceByEventType(batch, "signalingState");
-            coalesceByEventType(batch, "peerConnectionState");
-            // onSelectedCandidatePairChanged is also state-like — only the
-            // current active candidate pair matters, not intermediate selections.
-            coalesceByEventType(batch, "onSelectedCandidatePairChanged");
-            // onRenegotiationNeeded is an idempotent trigger — if N arrive in
-            // one batch, the Dart side only needs to act on it once. The
-            // resulting createOffer() will cover all pending changes.
-            coalesceByEventType(batch, "onRenegotiationNeeded");
-        }
+        coalesceByEventType(batch, "iceConnectionState");
+        coalesceByEventType(batch, "iceGatheringState");
+        coalesceByEventType(batch, "signalingState");
+        coalesceByEventType(batch, "peerConnectionState");
+        // onSelectedCandidatePairChanged is also state-like — only the
+        // current active candidate pair matters, not intermediate selections.
+        coalesceByEventType(batch, "onSelectedCandidatePairChanged");
+        // onRenegotiationNeeded is an idempotent trigger — if N arrive in
+        // one batch, the Dart side only needs to act on it once. The
+        // resulting createOffer() will cover all pending changes.
+        coalesceByEventType(batch, "onRenegotiationNeeded");
 
-        if (batch.size() == 1) {
-            // Single event: send unbatched (backward compat)
-            eventSink.success(batch.get(0));
-        } else if (batch.size() > 1) {
-            // Multiple events: single platform channel crossing
-            eventSink.success(batch);
-        }
+        // Multiple events: single platform channel crossing
+        eventSink.success(batch);
     }
 
     /**
