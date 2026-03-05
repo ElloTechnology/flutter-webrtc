@@ -4,14 +4,35 @@ import android.os.Handler;
 import android.os.Looper;
 
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.BitSet;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.flutter.plugin.common.EventChannel;
 
 public final class AnyThreadSink implements EventChannel.EventSink {
+
+    // State-machine and idempotent event types that can be coalesced:
+    // only the latest occurrence in a batch matters.
+    //   - State-machine types: only the current state matters; intermediate
+    //     transitions are stale by the time the batch reaches Dart.
+    //   - onSelectedCandidatePairChanged: state-like — only the current
+    //     active candidate pair matters, not intermediate selections.
+    //   - onRenegotiationNeeded: idempotent trigger — the Dart side only
+    //     needs to act once; the resulting createOffer() covers all changes.
+    // Note: ICE *candidates* (onCandidate) are NOT coalesced — each
+    // candidate is unique and required for connectivity establishment.
+    private static final Set<String> COALESCED_EVENT_TYPES = Set.of(
+            "iceConnectionState",
+            "iceGatheringState",
+            "signalingState",
+            "peerConnectionState",
+            "onSelectedCandidatePairChanged",
+            "onRenegotiationNeeded"
+    );
 
     final private EventChannel.EventSink eventSink;
     final private Handler handler = new Handler(Looper.getMainLooper());
@@ -36,11 +57,10 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         }
     }
 
-    // The coalescing below is O(k × n²) where k = number of coalesced event types
-    // and n = batch size, because ArrayList.iterator().remove() shifts elements.
-    // This local expense is intentional: it prevents per-event main-thread dispatches.
-    // The cost of k separate handler.post() round-trips to the main-thread looper
-    // greatly outweighs the local iteration cost for the small batches seen in practice.
+    // Batches all queued events into a single platform-channel crossing,
+    // coalescing redundant state events in O(n). This local expense prevents
+    // per-event main-thread dispatches whose looper round-trip cost greatly
+    // outweighs the iteration here.
     private void drain() {
         // reset FIRST so new arrivals can schedule
         drainScheduled.set(false);
@@ -61,73 +81,47 @@ public final class AnyThreadSink implements EventChannel.EventSink {
             return;
         }
 
-        // Coalesce state-machine events: if the batch contains multiple events
-        // of the same state type, only the latest matters — intermediate states
-        // are already stale by the time the batch reaches Dart. This is safe
-        // because:
-        //   - These are all finite state machines; only the current state matters
-        //   - The Dart layer caches the state and invokes a callback — receiving
-        //     "checking" then "connected" is equivalent to just receiving "connected"
-        //   - Under CPU pressure , state flapping can produce bursts of events 
-        //     that consume main-thread queue slots needed for data-channel messages
-        // Note: ICE *candidates* (onCandidate) are NOT coalesced — each candidate
-        // is unique and required for connectivity establishment.
-        coalesceByEventType(batch, "iceConnectionState");
-        coalesceByEventType(batch, "iceGatheringState");
-        coalesceByEventType(batch, "signalingState");
-        coalesceByEventType(batch, "peerConnectionState");
-        // onSelectedCandidatePairChanged is also state-like — only the
-        // current active candidate pair matters, not intermediate selections.
-        coalesceByEventType(batch, "onSelectedCandidatePairChanged");
-        // onRenegotiationNeeded is an idempotent trigger — if N arrive in
-        // one batch, the Dart side only needs to act on it once. The
-        // resulting createOffer() will cover all pending changes.
-        coalesceByEventType(batch, "onRenegotiationNeeded");
+        coalesceStateEvents(batch);
 
         // Multiple events: single platform channel crossing
         eventSink.success(batch);
     }
 
     /**
-     * Removes all but the last event with the given "event" type from the batch.
-     * This keeps the final (most recent) state and drops intermediate transitions
-     * that the Dart side would just overwrite anyway.
+     * Removes all but the last event of each coalesced type from the batch
+     * in a single O(n) pass. Non-coalesced events are always kept.
      *
      * For example, if the batch contains:
      *   [iceConnectionState=checking, onMessage, iceConnectionState=connected, onMessage]
-     * After coalescing "iceConnectionState":
+     * After coalescing:
      *   [onMessage, iceConnectionState=connected, onMessage]
      * The "checking" event is dropped since "connected" supersedes it.
      */
-    private static void coalesceByEventType(ArrayList<Object> batch, String eventType) {
-        // Find the index of the last event of this type
-        int lastIndex = -1;
+    private static void coalesceStateEvents(ArrayList<Object> batch) {
+        // Reverse pass: for each coalesced type, mark only its last occurrence
+        // as kept. All earlier duplicates are left unmarked (not set in keep).
+        Set<String> seen = new HashSet<>();
+        BitSet keep = new BitSet(batch.size());
         for (int i = batch.size() - 1; i >= 0; i--) {
             Object item = batch.get(i);
-            if (item instanceof Map<?, ?> map) {
-                if (eventType.equals(map.get("event"))) {
-                    lastIndex = i;
-                    break;
-                }
+            if (item instanceof Map<?, ?> map
+                    && map.get("event") instanceof String s
+                    && COALESCED_EVENT_TYPES.contains(s)) {
+                if (!seen.add(s)) continue; // earlier duplicate — don't keep
             }
+            keep.set(i);
         }
 
-        if (lastIndex < 0) return; // no events of this type
+        if (keep.cardinality() == batch.size()) return; // nothing to coalesce
 
-        // Remove all earlier events of this type, keeping the last one
-        Iterator<Object> it = batch.iterator();
-        int idx = 0;
-        while (it.hasNext()) {
-            Object item = it.next();
-            if (idx < lastIndex && item instanceof Map<?, ?> map) {
-                if (eventType.equals(map.get("event"))) {
-                    it.remove();
-                    lastIndex--; // adjust since we removed an element before it
-                    continue;    // don't increment idx — removal shifted the list
-                }
+        // Forward pass: compact in-place, preserving relative order
+        int dst = 0;
+        for (int src = 0; src < batch.size(); src++) {
+            if (keep.get(src)) {
+                batch.set(dst++, batch.get(src));
             }
-            idx++;
         }
+        batch.subList(dst, batch.size()).clear();
     }
 
     @Override
