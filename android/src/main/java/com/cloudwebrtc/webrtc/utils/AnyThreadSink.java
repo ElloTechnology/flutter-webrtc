@@ -108,10 +108,11 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         BitSet keep = new BitSet(batch.size());
         for (int i = batch.size() - 1; i >= 0; i--) {
             Object item = batch.get(i);
-            if (item instanceof Map<?, ?> map
-                    && map.get("event") instanceof String s
-                    && COALESCED_EVENT_TYPES.contains(s)) {
-                if (!seen.add(s)) continue; // earlier duplicate — don't keep
+            if (item instanceof Map) {
+                Object ev = ((Map<?, ?>) item).get("event");
+                if (ev instanceof String && COALESCED_EVENT_TYPES.contains((String) ev)) {
+                    if (!seen.add((String) ev)) continue; // earlier duplicate — don't keep
+                }
             }
             keep.set(i);
         }
