@@ -21,6 +21,9 @@ public class LocalAudioTrack
         super(audioTrack);
     }
 
+    // Replaced synchronized ArrayList with CopyOnWriteArrayList for better performance:
+    // iteration in onWebRtcAudioRecordSamplesReady (called ~100x/sec) is lock-free,
+    // while sinks are added/removed infrequently.
     final CopyOnWriteArrayList<AudioTrackSink> sinks = new CopyOnWriteArrayList<>();
 
     /**
