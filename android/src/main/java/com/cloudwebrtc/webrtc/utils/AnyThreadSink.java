@@ -130,12 +130,12 @@ public final class AnyThreadSink implements EventChannel.EventSink {
 
     @Override
     public void error(String s, String s1, Object o) {
-        post(() -> eventSink.error(s, s1, o));
+        post(()->eventSink.error(s, s1, o));
     }
 
     @Override
     public void endOfStream() {
-        post(() -> eventSink.endOfStream());
+        post(eventSink::endOfStream);
     }
 
     private void post(Runnable r) {
