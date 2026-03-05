@@ -589,8 +589,9 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             byteBuffer = ByteBuffer.wrap(data.getBytes(StandardCharsets.UTF_8));
         }
         dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
-        // Fire-and-forget: don't post result.success(null) back —
-        // native side has no reply data, saving main-thread dispatches.
+        // Fire-and-forget: the Dart side uses BinaryMessenger.send() without
+        // a reply handler, so there is no Result to complete. Do NOT call
+        // result.success() — it would crash with "Reply already submitted".
         break;
       }
       case "dataChannelClose": {
