@@ -6,7 +6,6 @@ import android.os.Handler;
 import io.flutter.plugin.common.MethodChannel;
 
 public final class AnyThreadResult implements MethodChannel.Result {
-
     final private MethodChannel.Result result;
     final private Handler handler = new Handler(Looper.getMainLooper());
 
@@ -16,12 +15,12 @@ public final class AnyThreadResult implements MethodChannel.Result {
 
     @Override
     public void success(Object o) {
-        post(() -> result.success(o));
+        post(()->result.success(o));
     }
 
     @Override
     public void error(String s, String s1, Object o) {
-        post(() -> result.error(s, s1, o));
+        post(()->result.error(s, s1, o));
     }
 
     @Override

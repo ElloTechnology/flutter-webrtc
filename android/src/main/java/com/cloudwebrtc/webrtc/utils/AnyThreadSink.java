@@ -37,7 +37,8 @@ public final class AnyThreadSink implements EventChannel.EventSink {
     }
 
     private void drain() {
-        drainScheduled.set(false);          // reset FIRST so new arrivals can schedule
+        // reset FIRST so new arrivals can schedule
+        drainScheduled.set(false);
 
         // Collect all queued events into a batch
         ArrayList<Object> batch = new ArrayList<>();
@@ -55,9 +56,8 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         //   - These are all finite state machines; only the current state matters
         //   - The Dart layer caches the state and invokes a callback — receiving
         //     "checking" then "connected" is equivalent to just receiving "connected"
-        //   - Under CPU pressure (Redmi A5 compound stress), state flapping
-        //     can produce bursts of events that consume main-thread queue slots
-        //     needed for latency-sensitive data-channel messages
+        //   - Under CPU pressure , state flapping can produce bursts of events 
+        //     that consume main-thread queue slots needed for data-channel messages
         // Note: ICE *candidates* (onCandidate) are NOT coalesced — each candidate
         // is unique and required for connectivity establishment.
         if (batch.size() > 1) {
