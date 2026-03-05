@@ -196,14 +196,12 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     }
   }
 
-  void dataChannelSetBufferedAmountLowThreshold(String dataChannelId, long threshold, Result result) {
+  void dataChannelSetBufferedAmountLowThreshold(String dataChannelId, long threshold) {
     DataChannelObserver observer = dataChannelObservers.get(dataChannelId);
     if (observer != null) {
       observer.setBufferedAmountLowThreshold(threshold);
-      result.success(null);
     } else {
       Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() observer is null for dcId=" + dataChannelId);
-      resultError("dataChannelSetBufferedAmountLowThreshold", "DataChannelObserver not found", result);
     }
   }
 

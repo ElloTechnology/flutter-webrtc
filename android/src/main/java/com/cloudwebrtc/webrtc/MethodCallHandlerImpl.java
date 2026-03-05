@@ -605,7 +605,8 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         String peerConnectionId = call.argument("peerConnectionId");
         String dataChannelId = call.argument("dataChannelId");
         Number threshold = call.argument("threshold");
-        dataChannelSetBufferedAmountLowThreshold(peerConnectionId, dataChannelId, threshold != null ? threshold.longValue() : -1, result);
+        dataChannelSetBufferedAmountLowThreshold(peerConnectionId, dataChannelId, threshold != null ? threshold.longValue() : -1);
+        // Fire-and-forget: no result.success() — same as dataChannelSend.
         break;
       }
       case "streamDispose": {
@@ -2238,13 +2239,12 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
     }
   }
 
-  public void dataChannelSetBufferedAmountLowThreshold(String peerConnectionId, String dataChannelId, long threshold, Result result) {
+  public void dataChannelSetBufferedAmountLowThreshold(String peerConnectionId, String dataChannelId, long threshold) {
     PeerConnectionObserver pco = mPeerConnectionObservers.get(peerConnectionId);
     if (pco == null || pco.getPeerConnection() == null) {
       Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() peerConnection is null");
-      resultError("dataChannelSetBufferedAmountLowThreshold", "peerConnection is null", result);
     } else {
-      pco.dataChannelSetBufferedAmountLowThreshold(dataChannelId, threshold, result);
+      pco.dataChannelSetBufferedAmountLowThreshold(dataChannelId, threshold);
     }
   }
 

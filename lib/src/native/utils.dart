@@ -57,7 +57,10 @@ class WebRTC {
   /// expected, and no memory is leaked. The native side must NOT call
   /// result.success/error (there is no result to complete).
   static void invokeMethodFireAndForget(String methodName,
-      [dynamic param]) {
+      [dynamic param]) async {
+    await initialize(options: {
+      'logSeverity': NativeLogsListener.instance.severity,
+    });
     ServicesBinding.instance.defaultBinaryMessenger.send(
       'FlutterWebRTC.Method',
       _codec.encodeMethodCall(MethodCall(methodName, param)),
