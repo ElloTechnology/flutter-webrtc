@@ -144,6 +144,10 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       }
     }
     DataChannel dataChannel = peerConnection.createDataChannel(label, init);
+    // XXX RTP data channels are not defined by the WebRTC standard, have
+    // been deprecated in Chromium, and Google have decided (in 2015) to no
+    // longer support them (in the face of multiple reported issues of
+    // breakages).
     String flutterId = getNextDataChannelUUID();
     if (dataChannel != null) {
       dataChannels.put(flutterId, dataChannel);
