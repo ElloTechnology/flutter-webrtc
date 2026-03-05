@@ -405,6 +405,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     }
     lastIceGatheringState = iceGatheringState;
 
+    Log.d(TAG, "onIceGatheringChange" + iceGatheringState.name());
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "iceGatheringState");
     params.putString("state", Utils.iceGatheringStateString(iceGatheringState));
@@ -651,6 +652,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     }
     lastPeerConnectionState = connectionState;
 
+    Log.d(TAG, "onConnectionChange" + connectionState.name());
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "peerConnectionState");
     params.putString("state", Utils.connectionStateString(connectionState));
