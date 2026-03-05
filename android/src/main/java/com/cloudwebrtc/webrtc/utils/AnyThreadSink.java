@@ -25,6 +25,10 @@ public final class AnyThreadSink implements EventChannel.EventSink {
     //     needs to act once; the resulting createOffer() covers all changes.
     // Note: ICE *candidates* (onCandidate) are NOT coalesced — each
     // candidate is unique and required for connectivity establishment.
+    //
+    // These strings are the "event" values set in ConstraintsMap params by
+    // PeerConnectionObserver's PeerConnection.Observer callback methods
+    // (e.g. onIceConnectionChange → "iceConnectionState").
     private static final Set<String> COALESCED_EVENT_TYPES = Set.of(
             "iceConnectionState",
             "iceGatheringState",
