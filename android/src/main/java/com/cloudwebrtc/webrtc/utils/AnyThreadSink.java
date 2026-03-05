@@ -104,9 +104,7 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         int lastIndex = -1;
         for (int i = batch.size() - 1; i >= 0; i--) {
             Object item = batch.get(i);
-            if (item instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> map = (Map<String, Object>) item;
+            if (item instanceof Map<?, ?> map) {
                 if (eventType.equals(map.get("event"))) {
                     lastIndex = i;
                     break;
@@ -121,12 +119,11 @@ public final class AnyThreadSink implements EventChannel.EventSink {
         int idx = 0;
         while (it.hasNext()) {
             Object item = it.next();
-            if (idx < lastIndex && item instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> map = (Map<String, Object>) item;
+            if (idx < lastIndex && item instanceof Map<?, ?> map) {
                 if (eventType.equals(map.get("event"))) {
                     it.remove();
                     lastIndex--; // adjust since we removed an element before it
+                    continue;    // don't increment idx — removal shifted the list
                 }
             }
             idx++;
