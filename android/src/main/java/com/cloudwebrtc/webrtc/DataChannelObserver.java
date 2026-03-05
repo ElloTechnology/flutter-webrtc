@@ -24,7 +24,7 @@ class DataChannelObserver implements DataChannel.Observer, EventChannel.StreamHa
     // when the buffered amount crosses below this threshold (matching Web API behavior).
     // -1 means "not set" — all events are dispatched (backwards compatible).
     private volatile long bufferLowThreshold = -1;
-    private long lastBufferedAmount = 0;
+    private volatile long lastBufferedAmount = 0;
 
     void setBufferedAmountLowThreshold(long threshold) {
         this.bufferLowThreshold = threshold;

@@ -57,8 +57,9 @@ public class LocalAudioTrack
         int bitsPerSample = getBytesPerSample(audioSamples.getAudioFormat()) * 8;
         int numFrames = audioSamples.getSampleRate() / 100;
         long timestamp = SystemClock.elapsedRealtime();
+        ByteBuffer byteBuffer = ByteBuffer.wrap(audioSamples.getData());
         for (AudioTrackSink sink : sinks) {
-            ByteBuffer byteBuffer = ByteBuffer.wrap(audioSamples.getData());
+            byteBuffer.rewind();
             sink.onData(byteBuffer, bitsPerSample, audioSamples.getSampleRate(),
                     audioSamples.getChannelCount(), numFrames, timestamp);
         }
