@@ -48,6 +48,7 @@ import org.webrtc.VideoTrack;
 class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.StreamHandler {
   private final static String TAG = FlutterWebRTCPlugin.TAG;
   private final Map<String, DataChannel> dataChannels = new HashMap<>();
+  private final Map<String, DataChannelObserver> dataChannelObservers = new HashMap<>();
   private final BinaryMessenger messenger;
   private final String id;
   private PeerConnection peerConnection;
@@ -58,6 +59,18 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
   private final StateProvider stateProvider;
   private final EventChannel eventChannel;
   private EventChannel.EventSink eventSink;
+
+  // Track last dispatched ICE states to suppress duplicate events.
+  // Under high CPU pressure, WebRTC can fire the same state multiple times
+  // (e.g., repeated "checking" during ICE restart). Each dispatch consumes a
+  // main-thread queue slot that competes with data-channel messages — on the
+  // Redmi A5 this was observed clogging the queue and inflating RTT.
+  // By deduplicating at the source we avoid wasting queue capacity on stale
+  // state transitions the Dart side has already processed.
+  private volatile PeerConnection.IceConnectionState lastIceConnectionState = null;
+  private volatile PeerConnection.IceGatheringState lastIceGatheringState = null;
+  private volatile PeerConnection.SignalingState lastSignalingState = null;
+  private volatile PeerConnection.PeerConnectionState lastPeerConnectionState = null;
 
   PeerConnectionObserver(PeerConnection.RTCConfiguration configuration, StateProvider stateProvider, BinaryMessenger messenger, String id) {
     this.configuration = configuration;
@@ -102,6 +115,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     remoteStreams.clear();
     remoteTracks.clear();
     dataChannels.clear();
+    dataChannelObservers.clear();
   }
 
   void dispose() {
@@ -154,6 +168,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     if (dataChannel != null) {
       dataChannel.close();
       dataChannels.remove(dataChannelId);
+      dataChannelObservers.remove(dataChannelId);
     } else {
       Log.d(TAG, "dataChannelClose() dataChannel is null");
     }
@@ -178,6 +193,15 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     } else {
       Log.d(TAG, "dataChannelGetBufferedAmount() dataChannel is null");
       resultError("dataChannelGetBufferedAmount", "DataChannel is null", result);
+    }
+  }
+
+  void dataChannelSetBufferedAmountLowThreshold(String dataChannelId, long threshold) {
+    DataChannelObserver observer = dataChannelObservers.get(dataChannelId);
+    if (observer != null) {
+      observer.setBufferedAmountLowThreshold(threshold);
+    } else {
+      Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() observer is null for dcId=" + dataChannelId);
     }
   }
 
@@ -345,6 +369,16 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onIceConnectionChange(PeerConnection.IceConnectionState iceConnectionState) {
+    // Skip duplicate ICE connection state events. WebRTC can fire the same
+    // state repeatedly (e.g., multiple "checking" callbacks during an ICE
+    // restart). Each event costs a main-thread dispatch via AnyThreadSink;
+    // under CPU pressure these redundant dispatches compete with data-channel
+    // messages for queue capacity, inflating RTT on low-end devices.
+    if (iceConnectionState == lastIceConnectionState) {
+      return;
+    }
+    lastIceConnectionState = iceConnectionState;
+
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "iceConnectionState");
     params.putString("state", Utils.iceConnectionStateString(iceConnectionState));
@@ -362,6 +396,13 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onIceGatheringChange(PeerConnection.IceGatheringState iceGatheringState) {
+    // Same deduplication as onIceConnectionChange — skip repeated gathering
+    // states to avoid unnecessary main-thread dispatches.
+    if (iceGatheringState == lastIceGatheringState) {
+      return;
+    }
+    lastIceGatheringState = iceGatheringState;
+
     Log.d(TAG, "onIceGatheringChange" + iceGatheringState.name());
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "iceGatheringState");
@@ -572,8 +613,9 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     // DataChannel.registerObserver implementation does not allow to
     // unregister, so the observer is registered here and is never
     // unregistered
-    dataChannel.registerObserver(
-        new DataChannelObserver(messenger, id, dcId, dataChannel));
+    DataChannelObserver observer = new DataChannelObserver(messenger, id, dcId, dataChannel);
+    dataChannelObservers.put(dcId, observer);
+    dataChannel.registerObserver(observer);
   }
 
   @Override
@@ -585,6 +627,14 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onSignalingChange(PeerConnection.SignalingState signalingState) {
+    // Deduplicate — same rationale as ICE state deduplication.
+    // Signaling state can repeat during rapid offer/answer cycles
+    // (e.g., multiple renegotiations triggered in quick succession).
+    if (signalingState == lastSignalingState) {
+      return;
+    }
+    lastSignalingState = signalingState;
+
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "signalingState");
     params.putString("state", Utils.signalingStateString(signalingState));
@@ -593,6 +643,13 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onConnectionChange(PeerConnection.PeerConnectionState connectionState) {
+    // Deduplicate — peerConnectionState mirrors ICE + DTLS state and can
+    // fire repeatedly with the same value during reconnection attempts.
+    if (connectionState == lastPeerConnectionState) {
+      return;
+    }
+    lastPeerConnectionState = connectionState;
+
     Log.d(TAG, "onConnectionChange" + connectionState.name());
     ConstraintsMap params = new ConstraintsMap();
     params.putString("event", "peerConnectionState");

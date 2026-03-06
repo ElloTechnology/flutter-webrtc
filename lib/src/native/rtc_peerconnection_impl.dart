@@ -135,9 +135,10 @@ class RTCPeerConnectionNative extends RTCPeerConnection {
   /*
    * PeerConnection event listener.
    */
-  void eventListener(dynamic event) {
-    final Map<dynamic, dynamic> map = event;
+  void eventListener(dynamic event) =>
+      forEachBatchedEvent(event, _handleSingleEvent);
 
+  void _handleSingleEvent(Map<dynamic, dynamic> map) {
     switch (map['event']) {
       case 'signalingState':
         _signalingState = signalingStateForString(map['state']);

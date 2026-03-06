@@ -251,8 +251,10 @@ class FrameCryptorImpl extends FrameCryptor {
     }
   }
 
-  void eventListener(dynamic event) {
-    final Map<dynamic, dynamic> map = event;
+  void eventListener(dynamic event) =>
+      forEachBatchedEvent(event, _handleSingleEvent);
+
+  void _handleSingleEvent(Map<dynamic, dynamic> map) {
     switch (map['event']) {
       case 'frameCryptionStateChanged':
         var state = _cryptorStateFromString(map['state']);

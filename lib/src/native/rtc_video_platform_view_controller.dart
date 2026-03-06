@@ -118,7 +118,11 @@ class RTCVideoPlatformViewController extends ValueNotifier<RTCVideoValue>
 
   void eventListener(dynamic event) {
     if (_disposed) return;
-    final Map<dynamic, dynamic> map = event;
+    forEachBatchedEvent(event, _handleSingleEvent);
+  }
+
+  void _handleSingleEvent(Map<dynamic, dynamic> map) {
+    if (_disposed) return;
     switch (map['event']) {
       case 'didPlatformViewChangeRotation':
         value =

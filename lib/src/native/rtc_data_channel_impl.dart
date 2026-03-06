@@ -29,9 +29,21 @@ class RTCDataChannelNative extends RTCDataChannel {
   final String _peerConnectionId;
   final String _label;
   int _bufferedAmount = 0;
+  int? _bufferedAmountLowThreshold;
+
   @override
   // ignore: overridden_fields
-  int? bufferedAmountLowThreshold;
+  int? get bufferedAmountLowThreshold => _bufferedAmountLowThreshold;
+
+  @override
+  set bufferedAmountLowThreshold(int? value) {
+    _bufferedAmountLowThreshold = value;
+    WebRTC.invokeMethodFireAndForget('dataChannelSetBufferedAmountLowThreshold', {
+      'peerConnectionId': _peerConnectionId,
+      'dataChannelId': _flutterId,
+      'threshold': value ?? -1,
+    });
+  }
 
   /// Id for the datachannel in the Flutter <-> Native layer.
   final String _flutterId;
@@ -59,8 +71,10 @@ class RTCDataChannelNative extends RTCDataChannel {
       StreamController<RTCDataChannelMessage>.broadcast(sync: true);
 
   /// RTCDataChannel event listener.
-  void eventListener(dynamic event) {
-    final Map<dynamic, dynamic> map = event;
+  void eventListener(dynamic event) =>
+      forEachBatchedEvent(event, _handleSingleEvent);
+
+  void _handleSingleEvent(Map<dynamic, dynamic> map) {
     switch (map['event']) {
       case 'dataChannelStateChanged':
         _dataChannelId = map['id'];
@@ -121,13 +135,18 @@ class RTCDataChannelNative extends RTCDataChannel {
   }
 
   @override
-  Future<void> send(RTCDataChannelMessage message) async {
-    await WebRTC.invokeMethod('dataChannelSend', <String, dynamic>{
+  Future<void> send(RTCDataChannelMessage message) {
+    // Fire-and-forget: uses BinaryMessenger.send() directly to avoid
+    // registering a reply handler. The native side performs the send
+    // synchronously and has no result to return — no reply handler means
+    // no leaked Futures and no main-thread dispatch cost.
+    WebRTC.invokeMethodFireAndForget('dataChannelSend', <String, dynamic>{
       'peerConnectionId': _peerConnectionId,
       'dataChannelId': _flutterId,
       'type': message.isBinary ? 'binary' : 'text',
       'data': message.isBinary ? message.binary : message.text,
     });
+    return Future.value();
   }
 
   @override

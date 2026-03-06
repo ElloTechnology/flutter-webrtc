@@ -5,7 +5,6 @@ import com.cloudwebrtc.webrtc.utils.ConstraintsMap;
 
 import org.webrtc.DataChannel;
 
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
@@ -20,6 +19,16 @@ class DataChannelObserver implements DataChannel.Observer, EventChannel.StreamHa
     private final EventChannel eventChannel;
     private EventChannel.EventSink eventSink;
     private final ArrayList eventQueue = new ArrayList();
+
+    // Native-side threshold filtering: only dispatch buffered-amount events
+    // when the buffered amount crosses below this threshold (matching Web API behavior).
+    // -1 means "not set" — all events are dispatched (backwards compatible).
+    private volatile long bufferLowThreshold = -1;
+    private volatile long lastBufferedAmount = 0;
+
+    void setBufferedAmountLowThreshold(long threshold) {
+        this.bufferLowThreshold = threshold;
+    }
 
     DataChannelObserver(BinaryMessenger messenger, String peerConnectionId, String flutterId,
                         DataChannel dataChannel) {
@@ -60,20 +69,36 @@ class DataChannelObserver implements DataChannel.Observer, EventChannel.StreamHa
     
     @Override
     public void onBufferedAmountChange(long amount) {
+        long buffered = dataChannel.bufferedAmount();
+        long threshold = bufferLowThreshold;
+
+        boolean shouldDispatch;
+        if (threshold < 0) {
+            // No threshold set — dispatch all events (backwards compatible)
+            shouldDispatch = true;
+        } else {
+            // Only dispatch when crossing below the threshold
+            shouldDispatch = lastBufferedAmount >= threshold && buffered < threshold;
+        }
+        lastBufferedAmount = buffered;
+
+        if (!shouldDispatch) return;
+
         ConstraintsMap params = new ConstraintsMap();
         params.putString("event", "dataChannelBufferedAmountChange");
         params.putInt("id", dataChannel.id());
-        params.putLong("bufferedAmount", dataChannel.bufferedAmount());
+        params.putLong("bufferedAmount", buffered);
         params.putLong("changedAmount", amount);
         sendEvent(params);
     }
 
     @Override
     public void onStateChange() {
+        String state = dataChannelStateString(dataChannel.state());
         ConstraintsMap params = new ConstraintsMap();
         params.putString("event", "dataChannelStateChanged");
         params.putInt("id", dataChannel.id());
-        params.putString("state", dataChannelStateString(dataChannel.state()));
+        params.putString("state", state);
         sendEvent(params);
     }
 

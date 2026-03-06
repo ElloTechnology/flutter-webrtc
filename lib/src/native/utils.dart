@@ -4,6 +4,20 @@ import 'package:flutter/services.dart';
 
 import '../native_logs_listener.dart';
 
+/// Unwraps a possibly-batched platform channel event and calls [handler]
+/// for each individual event map. The native side may send a single Map
+/// or a List of Maps when batching is enabled.
+void forEachBatchedEvent(
+    dynamic event, void Function(Map<dynamic, dynamic>) handler) {
+  if (event is List) {
+    for (final e in event) {
+      handler(e as Map<dynamic, dynamic>);
+    }
+  } else {
+    handler(event as Map<dynamic, dynamic>);
+  }
+}
+
 class WebRTC {
   static const MethodChannel _channel = MethodChannel('FlutterWebRTC.Method');
 
@@ -24,6 +38,8 @@ class WebRTC {
 
   static bool get platformIsWeb => false;
 
+  static const StandardMethodCodec _codec = StandardMethodCodec();
+
   static Future<T?> invokeMethod<T, P>(String methodName,
       [dynamic param]) async {
     await initialize(options: {
@@ -33,6 +49,21 @@ class WebRTC {
     return _channel.invokeMethod<T>(
       methodName,
       param,
+    );
+  }
+
+  /// Fire-and-forget: sends a method call to the native side without
+  /// registering a reply handler. No Future is created, no reply is
+  /// expected, and no memory is leaked. The native side must NOT call
+  /// result.success/error (there is no result to complete).
+  static void invokeMethodFireAndForget(String methodName,
+      [dynamic param]) async {
+    await initialize(options: {
+      'logSeverity': NativeLogsListener.instance.severity,
+    });
+    ServicesBinding.instance.defaultBinaryMessenger.send(
+      'FlutterWebRTC.Method',
+      _codec.encodeMethodCall(MethodCall(methodName, param)),
     );
   }
 

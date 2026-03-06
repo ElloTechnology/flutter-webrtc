@@ -9,8 +9,7 @@ import org.webrtc.VideoProcessor;
 import org.webrtc.VideoSink;
 import org.webrtc.VideoTrack;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     public interface ExternalVideoFrameProcessing {
@@ -26,18 +25,14 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
         super(videoTrack);
     }
 
-    List<ExternalVideoFrameProcessing> processors = new ArrayList<>();
+    final CopyOnWriteArrayList<ExternalVideoFrameProcessing> processors = new CopyOnWriteArrayList<>();
 
     public void addProcessor(ExternalVideoFrameProcessing processor) {
-        synchronized (processors) {
-            processors.add(processor);
-        }
+        processors.add(processor);
     }
 
     public void removeProcessor(ExternalVideoFrameProcessing processor) {
-        synchronized (processors) {
-            processors.remove(processor);
-        }
+        processors.remove(processor);
     }
 
     private VideoSink sink = null;
@@ -56,10 +51,8 @@ public class LocalVideoTrack extends LocalTrack implements VideoProcessor {
     @Override
     public void onFrameCaptured(VideoFrame videoFrame) {
         if (sink != null) {
-            synchronized (processors) {
-                for (ExternalVideoFrameProcessing processor : processors) {
-                    videoFrame = processor.onFrame(videoFrame);
-                }
+            for (ExternalVideoFrameProcessing processor : processors) {
+                videoFrame = processor.onFrame(videoFrame);
             }
             sink.onFrame(videoFrame);
         }
