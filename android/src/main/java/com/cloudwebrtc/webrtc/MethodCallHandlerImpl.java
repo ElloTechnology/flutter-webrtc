@@ -590,10 +590,18 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             String data = call.argument("data");
             byteBuffer = ByteBuffer.wrap(data.getBytes(StandardCharsets.UTF_8));
         }
-        boolean sendSuccess = dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
-        ConstraintsMap params = new ConstraintsMap();
-        params.putBoolean("success", sendSuccess);
-        result.success(params.toMap());
+        dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
+        // Fire-and-forget: the Dart side uses BinaryMessenger.send() without
+        // a reply handler, so there is no Result to complete. Do NOT call
+        // result.success() — it would crash with "Reply already submitted".
+        break;
+      }
+      case "dataChannelSetBufferedAmountLowThreshold": {
+        String peerConnectionId = call.argument("peerConnectionId");
+        String dataChannelId = call.argument("dataChannelId");
+        Number threshold = call.argument("threshold");
+        dataChannelSetBufferedAmountLowThreshold(peerConnectionId, dataChannelId, threshold != null ? threshold.longValue() : -1);
+        // Fire-and-forget: no result.success() — same as dataChannelSend.
         break;
       }
       case "dataChannelClose": {
@@ -2197,7 +2205,7 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
     }
   }
 
-  public boolean dataChannelSend(String peerConnectionId, String dataChannelId, ByteBuffer bytebuffer,
+  public void dataChannelSend(String peerConnectionId, String dataChannelId, ByteBuffer bytebuffer,
                               Boolean isBinary) {
     // Forward to PeerConnectionObserver which deals with DataChannels
     // because DataChannel is owned by PeerConnection.
@@ -2205,9 +2213,18 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             = mPeerConnectionObservers.get(peerConnectionId);
     if (pco == null || pco.getPeerConnection() == null) {
       Log.d(TAG, "dataChannelSend() peerConnection is null");
-      return false;
+    } else {
+      pco.dataChannelSend(dataChannelId, bytebuffer, isBinary);
     }
-    return pco.dataChannelSend(dataChannelId, bytebuffer, isBinary);
+  }
+
+  public void dataChannelSetBufferedAmountLowThreshold(String peerConnectionId, String dataChannelId, long threshold) {
+    PeerConnectionObserver pco = mPeerConnectionObservers.get(peerConnectionId);
+    if (pco == null || pco.getPeerConnection() == null) {
+      Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() peerConnection is null");
+    } else {
+      pco.dataChannelSetBufferedAmountLowThreshold(dataChannelId, threshold);
+    }
   }
 
   public void dataChannelGetBufferedAmount(String peerConnectionId, String dataChannelId, Result result) {
