@@ -100,6 +100,13 @@ class RTCDataChannelNative extends RTCDataChannel {
         _messageController.add(message);
         break;
 
+      case 'dataChannelBatchReceive':
+        final messages = map['messages'] as List;
+        for (final msg in messages) {
+          _handleSingleEvent(msg as Map<dynamic, dynamic>);
+        }
+        break;
+
       case 'dataChannelBufferedAmountChange':
         _bufferedAmount = map['bufferedAmount'];
         if (bufferedAmountLowThreshold != null) {
