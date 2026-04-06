@@ -340,10 +340,12 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
     mFactory = factoryBuilder
             .setAudioDeviceModule(audioDeviceModule)
             .createPeerConnectionFactory();
+
   }
 
   @Override
   public void onMethodCall(MethodCall call, @NonNull Result notSafeResult) {
+
     final AnyThreadResult result = new AnyThreadResult(notSafeResult);
     switch (call.method) {
       case "initialize": {
@@ -588,10 +590,10 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             String data = call.argument("data");
             byteBuffer = ByteBuffer.wrap(data.getBytes(StandardCharsets.UTF_8));
         }
-        dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
-        // Fire-and-forget: the Dart side uses BinaryMessenger.send() without
-        // a reply handler, so there is no Result to complete. Do NOT call
-        // result.success() — it would crash with "Reply already submitted".
+        boolean sendSuccess = dataChannelSend(peerConnectionId, dataChannelId, byteBuffer, isBinary);
+        ConstraintsMap params = new ConstraintsMap();
+        params.putBoolean("success", sendSuccess);
+        result.success(params.toMap());
         break;
       }
       case "dataChannelClose": {
@@ -599,14 +601,6 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
         String dataChannelId = call.argument("dataChannelId");
         dataChannelClose(peerConnectionId, dataChannelId);
         result.success(null);
-        break;
-      }
-      case "dataChannelSetBufferedAmountLowThreshold": {
-        String peerConnectionId = call.argument("peerConnectionId");
-        String dataChannelId = call.argument("dataChannelId");
-        Number threshold = call.argument("threshold");
-        dataChannelSetBufferedAmountLowThreshold(peerConnectionId, dataChannelId, threshold != null ? threshold.longValue() : -1);
-        // Fire-and-forget: no result.success() — same as dataChannelSend.
         break;
       }
       case "streamDispose": {
@@ -2203,7 +2197,7 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
     }
   }
 
-  public void dataChannelSend(String peerConnectionId, String dataChannelId, ByteBuffer bytebuffer,
+  public boolean dataChannelSend(String peerConnectionId, String dataChannelId, ByteBuffer bytebuffer,
                               Boolean isBinary) {
     // Forward to PeerConnectionObserver which deals with DataChannels
     // because DataChannel is owned by PeerConnection.
@@ -2211,9 +2205,9 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
             = mPeerConnectionObservers.get(peerConnectionId);
     if (pco == null || pco.getPeerConnection() == null) {
       Log.d(TAG, "dataChannelSend() peerConnection is null");
-    } else {
-      pco.dataChannelSend(dataChannelId, bytebuffer, isBinary);
+      return false;
     }
+    return pco.dataChannelSend(dataChannelId, bytebuffer, isBinary);
   }
 
   public void dataChannelGetBufferedAmount(String peerConnectionId, String dataChannelId, Result result) {
@@ -2236,15 +2230,6 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
       Log.d(TAG, "dataChannelClose() peerConnection is null");
     } else {
       pco.dataChannelClose(dataChannelId);
-    }
-  }
-
-  public void dataChannelSetBufferedAmountLowThreshold(String peerConnectionId, String dataChannelId, long threshold) {
-    PeerConnectionObserver pco = mPeerConnectionObservers.get(peerConnectionId);
-    if (pco == null || pco.getPeerConnection() == null) {
-      Log.d(TAG, "dataChannelSetBufferedAmountLowThreshold() peerConnection is null");
-    } else {
-      pco.dataChannelSetBufferedAmountLowThreshold(dataChannelId, threshold);
     }
   }
 

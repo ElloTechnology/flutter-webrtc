@@ -21,9 +21,8 @@ public class LocalAudioTrack
         super(audioTrack);
     }
 
-    // Replaced synchronized ArrayList with CopyOnWriteArrayList for better performance:
-    // iteration in onWebRtcAudioRecordSamplesReady (called ~100x/sec) is lock-free,
-    // while sinks are added/removed infrequently.
+    // Test 2.1: Use CopyOnWriteArrayList to avoid synchronized lock during iteration
+    // This eliminates lock contention in onWebRtcAudioRecordSamplesReady() hot path
     final CopyOnWriteArrayList<AudioTrackSink> sinks = new CopyOnWriteArrayList<>();
 
     /**
@@ -60,9 +59,9 @@ public class LocalAudioTrack
         int bitsPerSample = getBytesPerSample(audioSamples.getAudioFormat()) * 8;
         int numFrames = audioSamples.getSampleRate() / 100;
         long timestamp = SystemClock.elapsedRealtime();
-        ByteBuffer byteBuffer = ByteBuffer.wrap(audioSamples.getData());
+        // Test 2.1: No synchronized block needed - CopyOnWriteArrayList is safe for iteration
         for (AudioTrackSink sink : sinks) {
-            byteBuffer.rewind();
+            ByteBuffer byteBuffer = ByteBuffer.wrap(audioSamples.getData());
             sink.onData(byteBuffer, bitsPerSample, audioSamples.getSampleRate(),
                     audioSamples.getChannelCount(), numFrames, timestamp);
         }
