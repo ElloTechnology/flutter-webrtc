@@ -25,6 +25,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.webrtc.AudioTrack;
@@ -838,7 +839,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
     String degradationPreference = (String) newParameters.get("degradationPreference");
     if (degradationPreference != null) {
-      parameters.degradationPreference = RtpParameters.DegradationPreference.valueOf(degradationPreference.toUpperCase().replace("-", "_"));
+      parameters.degradationPreference = RtpParameters.DegradationPreference.valueOf(degradationPreference.toUpperCase(Locale.US).replace("-", "_"));
     }
 
     for (Map<String, Object> encoding : encodings) {
@@ -877,6 +878,9 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
         Double scaleResolutionDownBy = (Double) encoding.get("scaleResolutionDownBy");
         if (scaleResolutionDownBy != null)
           currentParams.scaleResolutionDownBy = scaleResolutionDownBy;
+        String scalabilityMode = (String) encoding.get("scalabilityMode");
+        if (scalabilityMode != null)
+          currentParams.scalabilityMode = scalabilityMode;
         String priority = (String) encoding.get("priority");
         if (priority != null)
           currentParams.bitratePriority = stringToBitratePriority(priority);
@@ -934,6 +938,9 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       }
       if (encoding.ssrc != null) {
         map.putLong("ssrc", encoding.ssrc);
+      }
+      if (encoding.scalabilityMode != null) {
+        map.putString("scalabilityMode", encoding.scalabilityMode);
       }
       map.putString("priority", bitratePriorityToString(encoding.bitratePriority));
       map.putString("networkPriority", priorityToString(encoding.networkPriority));
