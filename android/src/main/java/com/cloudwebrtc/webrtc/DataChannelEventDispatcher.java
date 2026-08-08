@@ -36,9 +36,12 @@ import io.flutter.plugin.common.EventChannel;
  */
 class DataChannelEventDispatcher {
 
-    // Shared background thread for all DataChannel instances (reduces thread overhead)
-    private static HandlerThread processingThread;
-    private static Handler processingHandler;
+    // Shared background thread for all DataChannel instances (reduces thread overhead).
+    // Volatile because ensureThread()'s fast path reads these without holding threadLock:
+    // without it there is no happens-before edge to the writes made under the lock, so a
+    // caller can observe a non-null handler whose Looper state is not yet visible.
+    private static volatile HandlerThread processingThread;
+    private static volatile Handler processingHandler;
     private static final Object threadLock = new Object();
 
     // Main thread handler for final delivery (Flutter EventChannel requires main thread)
@@ -95,7 +98,10 @@ class DataChannelEventDispatcher {
             return; // Fast path - thread already running
         }
         synchronized (threadLock) {
-            if (processingThread == null || !processingThread.isAlive()) {
+            // Guard on the handler too: a thread that starts the HandlerThread but has not yet
+            // assigned the handler leaves processingThread non-null and alive, so guarding on
+            // the thread alone lets another caller skip construction and dereference null.
+            if (processingHandler == null || processingThread == null || !processingThread.isAlive()) {
                 processingThread = new HandlerThread(
                     "DataChannelProcessor",
                     Process.THREAD_PRIORITY_DEFAULT
