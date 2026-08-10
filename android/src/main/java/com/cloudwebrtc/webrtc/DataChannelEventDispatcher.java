@@ -33,6 +33,16 @@ import io.flutter.plugin.common.EventChannel;
  * - eventSink is volatile for safe publication across threads
  * - pendingBatch uses synchronized blocks for batch management
  * - eventQueue uses CopyOnWriteArrayList for thread-safe queueing
+ *
+ * eventSink and eventQueue are reached only from the main thread, and that
+ * confinement is load-bearing rather than incidental. It is what makes the
+ * pairing of a null check on the sink with a fall back to the queue safe
+ * without a lock: the observer attaches and detaches the sink from the
+ * EventChannel callbacks, and delivery reaches the pair only through
+ * mainHandler, so the looper orders all three against each other. Move any of
+ * them onto another thread — an EventChannel served by a background task queue
+ * would do it — and the pair races with no lock to catch it, dropping an event
+ * into a queue that has just been drained.
  */
 class DataChannelEventDispatcher {
 
@@ -115,6 +125,10 @@ class DataChannelEventDispatcher {
     /**
      * Sets the EventSink and flushes any queued events.
      * Called from main thread when Flutter listener attaches via onListen().
+     *
+     * Setting the sink and draining the queue are unsynchronized because this
+     * runs on the main thread, the same thread that delivers. Calling it from
+     * anywhere else races the drain against a concurrent enqueue.
      *
      * @param sink The EventSink to use for delivering events to Flutter
      */
@@ -234,7 +248,10 @@ class DataChannelEventDispatcher {
      * Delivers all batched messages on the main thread.
      * This is the only place eventSink.success() is called.
      *
-     * Called on main thread via mainHandler.post().
+     * Called on main thread via mainHandler.post(). Reading the sink and
+     * falling back to the queue is unsynchronized on the strength of that:
+     * attach and detach run on the same thread, so neither can land between
+     * the two steps.
      *
      * Optimization 2.2a: Instead of calling sink.success() N times for N messages,
      * we batch all data channel messages into a single event to reduce platform
