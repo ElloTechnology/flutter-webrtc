@@ -40,6 +40,10 @@ class DataChannelObserver implements DataChannel.Observer, EventChannel.StreamHa
                         DataChannel dataChannel) {
         this.flutterId = flutterId;
         this.dataChannel = dataChannel;
+        // Constructed without a task queue on purpose: onListen and onCancel must
+        // run on the main thread, because the dispatcher pairs its sink check with
+        // a queue fallback and relies on the looper to order the two against
+        // delivery. A background task queue here reintroduces that race.
         eventChannel =
                 new EventChannel(messenger, "FlutterWebRTC/dataChannelEvent" + peerConnectionId + flutterId);
         eventChannel.setStreamHandler(this);
