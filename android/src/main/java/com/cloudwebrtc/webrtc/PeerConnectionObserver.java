@@ -605,6 +605,14 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     params.putMap("receiver", rtpReceiverToMap(receiver));
 
     if (this.configuration.sdpSemantics == PeerConnection.SdpSemantics.UNIFIED_PLAN) {
+      // The receiver handed to onAddTrack is owned by the native observer and
+      // stays valid until the PeerConnection is disposed, after close() has
+      // cleared the registry. Caching its track before the event reaches Dart
+      // lets track lookups skip getTransceivers(), which disposes the wrappers
+      // it returned last time and is unsafe to call from two threads.
+      MediaStreamTrack receiverTrack = receiver.track();
+      remoteTracks.put(receiverTrack.id(), receiverTrack);
+
       List<RtpTransceiver> transceivers = peerConnection.getTransceivers();
       for (RtpTransceiver transceiver : transceivers) {
         if (transceiver.getReceiver() != null && receiver.id().equals(transceiver.getReceiver().id())) {
