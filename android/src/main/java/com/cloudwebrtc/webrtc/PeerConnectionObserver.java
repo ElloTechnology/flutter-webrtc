@@ -60,6 +60,10 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
   private final RemoteTrackRegistry<MediaStreamTrack> remoteTracks =
       new RemoteTrackRegistry<>();
   final Map<String, RtpTransceiver> transceivers = new HashMap<>();
+  // The transceiver from the latest onTrack call. In Unified Plan, libwebrtc
+  // fires onTrack(transceiver) and then onAddTrack(transceiver's receiver) back
+  // to back on the signaling thread, so only that thread touches this field.
+  private RtpTransceiver lastTrackTransceiver;
   private final StateProvider stateProvider;
   private final EventChannel eventChannel;
   private EventChannel.EventSink eventSink;
@@ -114,10 +118,22 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     peerConnection.restartIce();
   }
 
+  // Under Unified Plan the receiver-owned wrapper cached by onAddTrack outlives
+  // the stream's wrapper, which libwebrtc disposes when the stream drops the
+  // track, so the stream's wrapper must not replace it.
+  private void cacheStreamTrack(String trackId, MediaStreamTrack track) {
+    if (configuration.sdpSemantics == PeerConnection.SdpSemantics.UNIFIED_PLAN) {
+      remoteTracks.putIfAbsent(trackId, track);
+    } else {
+      remoteTracks.put(trackId, track);
+    }
+  }
+
   void close() {
     peerConnection.close();
     remoteStreams.clear();
     remoteTracks.clear();
+    lastTrackTransceiver = null;
     dataChannels.clear();
     dataChannelObservers.clear();
   }
@@ -500,7 +516,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       VideoTrack track = mediaStream.videoTracks.get(i);
       String trackId = track.id();
 
-      remoteTracks.put(trackId, track);
+      cacheStreamTrack(trackId, track);
       stateProvider.onRemoteTrackAdded(id, streamId, track);
 
       ConstraintsMap trackInfo = new ConstraintsMap();
@@ -516,7 +532,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       AudioTrack track = mediaStream.audioTracks.get(i);
       String trackId = track.id();
 
-      remoteTracks.put(trackId, track);
+      cacheStreamTrack(trackId, track);
       stateProvider.onRemoteTrackAdded(id, streamId, track);
 
       ConstraintsMap trackInfo = new ConstraintsMap();
@@ -560,6 +576,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
 
   @Override
   public void onTrack(RtpTransceiver transceiver) {
+    lastTrackTransceiver = transceiver;
   }
 
   @Override
@@ -605,16 +622,31 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     params.putMap("receiver", rtpReceiverToMap(receiver));
 
     if (this.configuration.sdpSemantics == PeerConnection.SdpSemantics.UNIFIED_PLAN) {
-      List<RtpTransceiver> transceivers = peerConnection.getTransceivers();
-      for (RtpTransceiver transceiver : transceivers) {
-        if (transceiver.getReceiver() != null && receiver.id().equals(transceiver.getReceiver().id())) {
-          String transceiverId = transceiver.getMid();
-          if (null == transceiverId) {
-            transceiverId = stateProvider.getNextStreamUUID();
-            this.transceivers.put(transceiverId,transceiver);
-          }
-          params.putMap("transceiver", transceiverToMap(transceiverId, transceiver));
+      // The receiver handed to onAddTrack is owned by the native observer and
+      // stays valid until the PeerConnection is disposed, after close() has
+      // cleared the registry. Caching its track before the event reaches Dart
+      // lets track lookups skip getTransceivers(), which disposes the wrappers
+      // it returned last time and is unsafe to call from two threads.
+      // onRemoveTrack leaves the entry in place: the receiver-owned wrapper
+      // stays valid until the PeerConnection is disposed, and a new receiver
+      // reusing the track id may already have replaced it.
+      MediaStreamTrack receiverTrack = receiver.track();
+      remoteTracks.put(receiverTrack.id(), receiverTrack);
+
+      // Like the receiver, the onTrack transceiver is owned by the native
+      // observer, so this thread never calls getTransceivers().
+      RtpTransceiver transceiver = lastTrackTransceiver;
+      lastTrackTransceiver = null;
+      if (transceiver != null && transceiver.getReceiver() != null
+          && receiver.id().equals(transceiver.getReceiver().id())) {
+        String transceiverId = transceiver.getMid();
+        if (null == transceiverId) {
+          transceiverId = stateProvider.getNextStreamUUID();
+          this.transceivers.put(transceiverId,transceiver);
         }
+        params.putMap("transceiver", transceiverToMap(transceiverId, transceiver));
+      } else {
+        Log.w(TAG, "onAddTrack(): no onTrack transceiver for receiver " + receiver.id());
       }
     }
     sendEvent(params);

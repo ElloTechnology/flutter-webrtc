@@ -20,4 +20,16 @@ public class RemoteTrackRegistryTest {
     assertSame(replacementTrack, registry.get("video"));
     assertTrue(registry.remove("video", replacementTrack));
   }
+
+  @Test
+  public void putIfAbsentKeepsExistingTrackAndFillsEmptySlot() {
+    RemoteTrackRegistry<Object> registry = new RemoteTrackRegistry<>();
+    Object first = new Object();
+    Object second = new Object();
+
+    registry.putIfAbsent("video", first);
+    registry.putIfAbsent("video", second);
+
+    assertSame(first, registry.get("video"));
+  }
 }

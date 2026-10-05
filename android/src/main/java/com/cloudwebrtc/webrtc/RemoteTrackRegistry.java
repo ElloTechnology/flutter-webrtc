@@ -17,6 +17,10 @@ final class RemoteTrackRegistry<T> {
     tracks.put(trackId, track);
   }
 
+  synchronized void putIfAbsent(String trackId, T track) {
+    tracks.putIfAbsent(trackId, track);
+  }
+
   synchronized T get(String trackId) {
     return tracks.get(trackId);
   }
