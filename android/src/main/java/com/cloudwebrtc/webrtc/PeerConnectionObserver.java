@@ -118,10 +118,22 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
     peerConnection.restartIce();
   }
 
+  // Under Unified Plan the receiver-owned wrapper cached by onAddTrack outlives
+  // the stream's wrapper, which libwebrtc disposes when the stream drops the
+  // track, so the stream's wrapper must not replace it.
+  private void cacheStreamTrack(String trackId, MediaStreamTrack track) {
+    if (configuration.sdpSemantics == PeerConnection.SdpSemantics.UNIFIED_PLAN) {
+      remoteTracks.putIfAbsent(trackId, track);
+    } else {
+      remoteTracks.put(trackId, track);
+    }
+  }
+
   void close() {
     peerConnection.close();
     remoteStreams.clear();
     remoteTracks.clear();
+    lastTrackTransceiver = null;
     dataChannels.clear();
     dataChannelObservers.clear();
   }
@@ -504,7 +516,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       VideoTrack track = mediaStream.videoTracks.get(i);
       String trackId = track.id();
 
-      remoteTracks.put(trackId, track);
+      cacheStreamTrack(trackId, track);
       stateProvider.onRemoteTrackAdded(id, streamId, track);
 
       ConstraintsMap trackInfo = new ConstraintsMap();
@@ -520,7 +532,7 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       AudioTrack track = mediaStream.audioTracks.get(i);
       String trackId = track.id();
 
-      remoteTracks.put(trackId, track);
+      cacheStreamTrack(trackId, track);
       stateProvider.onRemoteTrackAdded(id, streamId, track);
 
       ConstraintsMap trackInfo = new ConstraintsMap();
@@ -615,9 +627,9 @@ class PeerConnectionObserver implements PeerConnection.Observer, EventChannel.St
       // cleared the registry. Caching its track before the event reaches Dart
       // lets track lookups skip getTransceivers(), which disposes the wrappers
       // it returned last time and is unsafe to call from two threads.
-      // onRemoveTrack leaves the entry in place: a stopped receiver keeps its
-      // ended track, which getTransceivers() would return too, and a new
-      // receiver reusing the track id may already have replaced it.
+      // onRemoveTrack leaves the entry in place: the receiver-owned wrapper
+      // stays valid until the PeerConnection is disposed, and a new receiver
+      // reusing the track id may already have replaced it.
       MediaStreamTrack receiverTrack = receiver.track();
       remoteTracks.put(receiverTrack.id(), receiverTrack);
 
