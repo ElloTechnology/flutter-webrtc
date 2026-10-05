@@ -1841,7 +1841,7 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
   }
 
   public void mediaStreamTrackSetVolume(final String id, final double volume, String peerConnectionId) {
-    MediaStreamTrack track = getTrackForId(id, null);
+    MediaStreamTrack track = getTrackForId(id, peerConnectionId);
     if (track instanceof AudioTrack) {
       Log.d(TAG, "setVolume(): " + id + "," + volume);
       try {
