@@ -158,6 +158,13 @@ NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *>* motifyH264ProfileLevelId(
   return [[self allKeys] objectEnumerator];
 }
 
+// The inherited block enumeration looks each key up again, so a concurrent
+// removal would hand the block a nil value.
+- (void)enumerateKeysAndObjectsWithOptions:(NSEnumerationOptions)opts
+                                usingBlock:(void (NS_NOESCAPE ^)(id key, id obj, BOOL* stop))block {
+  [[self copy] enumerateKeysAndObjectsWithOptions:opts usingBlock:block];
+}
+
 - (id)copyWithZone:(NSZone*)zone {
   os_unfair_lock_lock(&_lock);
   NSDictionary* copy = [_storage copy];
@@ -174,7 +181,7 @@ NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *>* motifyH264ProfileLevelId(
 
 - (void)setObject:(id)object forKey:(id<NSCopying>)key {
   os_unfair_lock_lock(&_lock);
-  id replaced = _storage[key];
+  __attribute__((objc_precise_lifetime)) id replaced = _storage[key];
   _storage[key] = object;
   os_unfair_lock_unlock(&_lock);
   (void)replaced;
@@ -182,7 +189,7 @@ NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *>* motifyH264ProfileLevelId(
 
 - (void)removeObjectForKey:(id)key {
   os_unfair_lock_lock(&_lock);
-  id removed = _storage[key];
+  __attribute__((objc_precise_lifetime)) id removed = _storage[key];
   [_storage removeObjectForKey:key];
   os_unfair_lock_unlock(&_lock);
   (void)removed;
@@ -190,7 +197,7 @@ NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *>* motifyH264ProfileLevelId(
 
 - (void)removeAllObjects {
   os_unfair_lock_lock(&_lock);
-  NSMutableDictionary* removed = _storage;
+  __attribute__((objc_precise_lifetime)) NSMutableDictionary* removed = _storage;
   _storage = [NSMutableDictionary new];
   os_unfair_lock_unlock(&_lock);
   (void)removed;
