@@ -210,8 +210,17 @@ void postEvent(FlutterEventSink _Nullable sink, id _Nullable event) {
         NSLog(@"postEvent: sink is nil, skipping event dispatch");
         return;
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
-      sink(event);
+    // Hop through the method queue so an event raised while a method call is
+    // running (e.g. renegotiation-needed during addTrack) reaches Dart after
+    // that call's result, as it did when method calls ran on the main thread.
+    dispatch_queue_t methodQueue = FlutterWebRTCPlugin.sharedSingleton.methodQueue;
+    if (methodQueue == nil) {
+      methodQueue = dispatch_get_main_queue();
+    }
+    dispatch_async(methodQueue, ^{
+      dispatch_async(dispatch_get_main_queue(), ^{
+        sink(event);
+      });
     });
 }
 
