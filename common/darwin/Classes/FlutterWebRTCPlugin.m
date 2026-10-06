@@ -208,6 +208,14 @@ void postEvent(FlutterEventSink _Nullable sink, id _Nullable event) {
     });
 }
 
+void runOnMainThreadSync(dispatch_block_t block) {
+  if ([NSThread isMainThread]) {
+    block();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), block);
+  }
+}
+
 @implementation FlutterWebRTCPlugin {
 #pragma clang diagnostic pop
   FlutterMethodChannel* _methodChannel;
@@ -571,11 +579,13 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
     peerConnection.flutterId = peerConnectionId;
 
     /*Create Event Channel.*/
-    peerConnection.eventChannel = [FlutterEventChannel
-        eventChannelWithName:[NSString stringWithFormat:@"FlutterWebRTC/peerConnectionEvent%@",
-                                                        peerConnectionId]
-             binaryMessenger:_messenger];
-    [peerConnection.eventChannel setStreamHandler:peerConnection];
+    runOnMainThreadSync(^{
+      peerConnection.eventChannel = [FlutterEventChannel
+          eventChannelWithName:[NSString stringWithFormat:@"FlutterWebRTC/peerConnectionEvent%@",
+                                                          peerConnectionId]
+               binaryMessenger:self->_messenger];
+      [peerConnection.eventChannel setStreamHandler:peerConnection];
+    });
 
     self.peerConnections[peerConnectionId] = peerConnection;
     result(@{@"peerConnectionId" : peerConnectionId});
@@ -1025,8 +1035,10 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
     [self deactiveRtcAudioSession];
     result(nil);
   } else if ([@"createVideoRenderer" isEqualToString:call.method]) {
-    FlutterRTCVideoRenderer* render = [self createWithTextureRegistry:_textures
-                                                            messenger:_messenger];
+    __block FlutterRTCVideoRenderer* render = nil;
+    runOnMainThreadSync(^{
+      render = [self createWithTextureRegistry:self->_textures messenger:self->_messenger];
+    });
     self.renders[@(render.textureId)] = render;
     result(@{@"textureId" : @(render.textureId)});
   } else if ([@"videoRendererDispose" isEqualToString:call.method]) {
@@ -1035,7 +1047,9 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
     FlutterRTCVideoRenderer* render = self.renders[textureId];
     if(render != nil) {
       render.videoTrack = nil;
-      [render dispose];
+      runOnMainThreadSync(^{
+        [render dispose];
+      });
       [self.renders removeObjectForKey:textureId];
     }
     result(nil);
@@ -1079,7 +1093,11 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
   else if ([@"videoPlatformViewRendererSetSrcObject" isEqualToString:call.method]) {
       NSDictionary* argsMap = call.arguments;
       NSNumber* viewId = argsMap[@"viewId"];
-      FlutterRTCVideoPlatformViewController* render = _platformViewFactory.renders[viewId];
+      // The factory registers platform views on the main thread.
+      __block FlutterRTCVideoPlatformViewController* render = nil;
+      runOnMainThreadSync(^{
+        render = self->_platformViewFactory.renders[viewId];
+      });
       NSString* streamId = argsMap[@"streamId"];
       NSString* ownerTag = argsMap[@"ownerTag"];
       NSString* trackId = argsMap[@"trackId"];
@@ -1114,10 +1132,14 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
   } else if ([@"videoPlatformViewRendererDispose" isEqualToString:call.method]) {
       NSDictionary* argsMap = call.arguments;
       NSNumber* viewId = argsMap[@"viewId"];
-      FlutterRTCVideoPlatformViewController* render = _platformViewFactory.renders[viewId];
+      // The factory registers platform views on the main thread.
+      __block FlutterRTCVideoPlatformViewController* render = nil;
+      runOnMainThreadSync(^{
+        render = self->_platformViewFactory.renders[viewId];
+        [self->_platformViewFactory.renders removeObjectForKey:viewId];
+      });
       if(render != nil) {
         render.videoTrack = nil;
-        [_platformViewFactory.renders removeObjectForKey:viewId];
       }
       result(nil);
     }

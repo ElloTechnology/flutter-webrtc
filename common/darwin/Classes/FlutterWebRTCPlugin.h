@@ -15,6 +15,13 @@
 
 void postEvent(FlutterEventSink _Nullable sink, id _Nullable event);
 
+/// Runs `block` on the main thread and waits for it to finish, inline when
+/// already on the main thread. Method-call handlers use it for APIs that only
+/// work on the platform thread: event channel stream handlers, the texture
+/// registry and UIKit. Blocking the method queue on the main thread cannot
+/// deadlock because the main thread never waits on the method queue.
+void runOnMainThreadSync(dispatch_block_t _Nonnull block);
+
 typedef void (^CompletionHandler)(void);
 
 typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);

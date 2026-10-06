@@ -60,29 +60,31 @@ NSArray<RTCDesktopSource*>* _captureSources;
   };
 
   if (presentBroadcastPicker) {
-    NSString* extension =
-        [[[NSBundle mainBundle] infoDictionary] valueForKey:kRTCScreenSharingExtension];
+    runOnMainThreadSync(^{
+      NSString* extension =
+          [[[NSBundle mainBundle] infoDictionary] valueForKey:kRTCScreenSharingExtension];
 
-    RPSystemBroadcastPickerView* picker = [[RPSystemBroadcastPickerView alloc] init];
-    picker.showsMicrophoneButton = false;
-    if (extension) {
-      picker.preferredExtension = extension;
-    } else {
-      NSLog(@"Not able to find the %@ key", kRTCScreenSharingExtension);
-    }
-    UIButton* button = nil;
-    for (UIView* subview in picker.subviews) {
-      if ([subview isKindOfClass:[UIButton class]]) {
-        button = (UIButton*)subview;
-        break;
+      RPSystemBroadcastPickerView* picker = [[RPSystemBroadcastPickerView alloc] init];
+      picker.showsMicrophoneButton = false;
+      if (extension) {
+        picker.preferredExtension = extension;
+      } else {
+        NSLog(@"Not able to find the %@ key", kRTCScreenSharingExtension);
       }
-    }
+      UIButton* button = nil;
+      for (UIView* subview in picker.subviews) {
+        if ([subview isKindOfClass:[UIButton class]]) {
+          button = (UIButton*)subview;
+          break;
+        }
+      }
 
-    if (button != nil) {
-      [button sendActionsForControlEvents:UIControlEventTouchUpInside];
-    } else {
-      NSLog(@"Unable to find button in RPSystemBroadcastPickerView");
-    }
+      if (button != nil) {
+        [button sendActionsForControlEvents:UIControlEventTouchUpInside];
+      } else {
+        NSLog(@"Unable to find button in RPSystemBroadcastPickerView");
+      }
+    });
   }
 #endif
 
