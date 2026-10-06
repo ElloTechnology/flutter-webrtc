@@ -30,7 +30,9 @@ typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
 #endif
                                            >
 
-@property(nonatomic, strong) RTCPeerConnectionFactory* _Nullable peerConnectionFactory;
+/// Atomic because other plugins read it from their own threads while a method
+/// call creates it.
+@property(atomic, strong) RTCPeerConnectionFactory* _Nullable peerConnectionFactory;
 @property(nonatomic, strong)
     NSMutableDictionary<NSString*, RTCPeerConnection*>* _Nullable peerConnections;
 @property(nonatomic, strong)
