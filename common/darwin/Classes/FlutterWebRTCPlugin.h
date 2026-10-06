@@ -74,6 +74,12 @@ typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
 
 @property(nonatomic, readonly) BOOL audioSessionManagementEnabled;
 
+/// Serial queue that runs method-channel calls, in the order Dart sent them.
+/// Work that continues a method call asynchronously and touches the plugin's
+/// registries resumes on this queue. It is the main queue where the binary
+/// messenger offers no background task queue (macOS).
+@property(nonatomic, strong, readonly) dispatch_queue_t _Nonnull methodQueue;
+
 /// Globally enable/disable Flutter WebRTC's own platform audio-session
 /// management (category/mode/focus/routing). Intended to be set once from
 /// native code (e.g. another plugin's registration) before any audio op.

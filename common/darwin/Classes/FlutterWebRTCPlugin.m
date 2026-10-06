@@ -296,11 +296,24 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
 @synthesize eventSink = _eventSink;
 @synthesize preferredInput = _preferredInput;
 @synthesize audioManager = _audioManager;
+@synthesize methodQueue = _methodQueue;
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
+  // Method calls block on WebRTC's signaling and worker threads, which can stall
+  // for seconds while the audio device module waits on the audio server (e.g.
+  // after an audio session interruption). Run them on a serial background queue
+  // so they never block the main thread, which also runs Dart. The plugin owns
+  // that queue so asynchronous continuations can resume on it.
+  NSObject<FlutterBinaryMessenger>* messenger = [registrar messenger];
+  NSObject<FlutterTaskQueue>* taskQueue = nil;
+  if ([messenger respondsToSelector:@selector(makeBackgroundTaskQueue)]) {
+    taskQueue = [messenger makeBackgroundTaskQueue];
+  }
   FlutterMethodChannel* channel =
-      [FlutterMethodChannel methodChannelWithName:@"FlutterWebRTC.Method"
-                                  binaryMessenger:[registrar messenger]];
+      [[FlutterMethodChannel alloc] initWithName:@"FlutterWebRTC.Method"
+                                 binaryMessenger:messenger
+                                           codec:[FlutterStandardMethodCodec sharedInstance]
+                                       taskQueue:taskQueue];
 #if TARGET_OS_IPHONE
   UIViewController* viewController = (UIViewController*)registrar.messenger;
 #endif
@@ -312,7 +325,21 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
                                     viewController:viewController
 #endif
                                       withTextures:[registrar textures]];
-  [registrar addMethodCallDelegate:instance channel:channel];
+  if (taskQueue == nil) {
+    instance->_methodQueue = dispatch_get_main_queue();
+    [registrar addMethodCallDelegate:instance channel:channel];
+    return;
+  }
+  dispatch_queue_t methodQueue = dispatch_queue_create(
+      "FlutterWebRTC.Method",
+      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+  instance->_methodQueue = methodQueue;
+  // The background task queue is serial, so calls reach methodQueue in order.
+  [channel setMethodCallHandler:^(FlutterMethodCall* call, FlutterResult result) {
+    dispatch_async(methodQueue, ^{
+      [instance handleMethodCall:call result:result];
+    });
+  }];
 }
 
 - (instancetype)initWithChannel:(FlutterMethodChannel*)channel
