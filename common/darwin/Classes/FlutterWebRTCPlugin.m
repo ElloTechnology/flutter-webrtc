@@ -33,6 +33,8 @@
 #import "LocalAudioTrack.h"
 #import "LocalVideoTrack.h"
 
+#import <os/lock.h>
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wprotocol"
 
@@ -97,14 +99,137 @@ NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *>* motifyH264ProfileLevelId(
 }
 @end
 
+// A mutable dictionary whose individual operations are safe to call from any
+// thread. Other plugins (e.g. livekit_client) read the track and peer
+// connection registries through +sharedSingleton on their own threads while
+// method calls mutate them, so those registries must tolerate concurrent
+// readers. Enumeration and copies work on a snapshot. Removed or replaced
+// values are released after the lock is dropped, since releasing a peer
+// connection or track can block on WebRTC's internal threads. Create it with
+// -init.
+@interface FlutterRTCThreadSafeDictionary : NSMutableDictionary
+@end
+
+@implementation FlutterRTCThreadSafeDictionary {
+  NSMutableDictionary* _storage;
+  os_unfair_lock _lock;
+}
+
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    _storage = [NSMutableDictionary new];
+    _lock = OS_UNFAIR_LOCK_INIT;
+  }
+  return self;
+}
+
+- (NSUInteger)count {
+  os_unfair_lock_lock(&_lock);
+  NSUInteger count = _storage.count;
+  os_unfair_lock_unlock(&_lock);
+  return count;
+}
+
+- (id)objectForKey:(id)key {
+  os_unfair_lock_lock(&_lock);
+  id object = _storage[key];
+  os_unfair_lock_unlock(&_lock);
+  return object;
+}
+
+- (NSArray*)allKeys {
+  os_unfair_lock_lock(&_lock);
+  NSArray* keys = _storage.allKeys;
+  os_unfair_lock_unlock(&_lock);
+  return keys;
+}
+
+- (NSArray*)allValues {
+  os_unfair_lock_lock(&_lock);
+  NSArray* values = _storage.allValues;
+  os_unfair_lock_unlock(&_lock);
+  return values;
+}
+
+// Fast enumeration (for-in) over an NSDictionary subclass goes through
+// keyEnumerator, so it also iterates a snapshot.
+- (NSEnumerator*)keyEnumerator {
+  return [[self allKeys] objectEnumerator];
+}
+
+// The inherited block enumeration looks each key up again, so a concurrent
+// removal would hand the block a nil value.
+- (void)enumerateKeysAndObjectsWithOptions:(NSEnumerationOptions)opts
+                                usingBlock:(void (NS_NOESCAPE ^)(id key, id obj, BOOL* stop))block {
+  [[self copy] enumerateKeysAndObjectsWithOptions:opts usingBlock:block];
+}
+
+- (id)copyWithZone:(NSZone*)zone {
+  os_unfair_lock_lock(&_lock);
+  NSDictionary* copy = [_storage copy];
+  os_unfair_lock_unlock(&_lock);
+  return copy;
+}
+
+- (id)mutableCopyWithZone:(NSZone*)zone {
+  os_unfair_lock_lock(&_lock);
+  NSMutableDictionary* copy = [_storage mutableCopy];
+  os_unfair_lock_unlock(&_lock);
+  return copy;
+}
+
+- (void)setObject:(id)object forKey:(id<NSCopying>)key {
+  os_unfair_lock_lock(&_lock);
+  __attribute__((objc_precise_lifetime)) id replaced = _storage[key];
+  _storage[key] = object;
+  os_unfair_lock_unlock(&_lock);
+  (void)replaced;
+}
+
+- (void)removeObjectForKey:(id)key {
+  os_unfair_lock_lock(&_lock);
+  __attribute__((objc_precise_lifetime)) id removed = _storage[key];
+  [_storage removeObjectForKey:key];
+  os_unfair_lock_unlock(&_lock);
+  (void)removed;
+}
+
+- (void)removeAllObjects {
+  os_unfair_lock_lock(&_lock);
+  __attribute__((objc_precise_lifetime)) NSMutableDictionary* removed = _storage;
+  _storage = [NSMutableDictionary new];
+  os_unfair_lock_unlock(&_lock);
+  (void)removed;
+}
+
+@end
+
 void postEvent(FlutterEventSink _Nullable sink, id _Nullable event) {
     if (sink == nil) {
         NSLog(@"postEvent: sink is nil, skipping event dispatch");
         return;
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
-      sink(event);
+    // Hop through the method queue so an event raised while a method call is
+    // running (e.g. renegotiation-needed during addTrack) reaches Dart after
+    // that call's result, as it did when method calls ran on the main thread.
+    dispatch_queue_t methodQueue = FlutterWebRTCPlugin.sharedSingleton.methodQueue;
+    if (methodQueue == nil) {
+      methodQueue = dispatch_get_main_queue();
+    }
+    dispatch_async(methodQueue, ^{
+      dispatch_async(dispatch_get_main_queue(), ^{
+        sink(event);
+      });
     });
+}
+
+void runOnMainThreadSync(dispatch_block_t block) {
+  if ([NSThread isMainThread]) {
+    block();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), block);
+  }
 }
 
 @implementation FlutterWebRTCPlugin {
@@ -187,11 +312,24 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
 @synthesize eventSink = _eventSink;
 @synthesize preferredInput = _preferredInput;
 @synthesize audioManager = _audioManager;
+@synthesize methodQueue = _methodQueue;
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
+  // Method calls block on WebRTC's signaling and worker threads, which can stall
+  // for seconds while the audio device module waits on the audio server (e.g.
+  // after an audio session interruption). Run them on a serial background queue
+  // so they never block the main thread, which also runs Dart. The plugin owns
+  // that queue so asynchronous continuations can resume on it.
+  NSObject<FlutterBinaryMessenger>* messenger = [registrar messenger];
+  NSObject<FlutterTaskQueue>* taskQueue = nil;
+  if ([messenger respondsToSelector:@selector(makeBackgroundTaskQueue)]) {
+    taskQueue = [messenger makeBackgroundTaskQueue];
+  }
   FlutterMethodChannel* channel =
-      [FlutterMethodChannel methodChannelWithName:@"FlutterWebRTC.Method"
-                                  binaryMessenger:[registrar messenger]];
+      [[FlutterMethodChannel alloc] initWithName:@"FlutterWebRTC.Method"
+                                 binaryMessenger:messenger
+                                           codec:[FlutterStandardMethodCodec sharedInstance]
+                                       taskQueue:taskQueue];
 #if TARGET_OS_IPHONE
   UIViewController* viewController = (UIViewController*)registrar.messenger;
 #endif
@@ -203,7 +341,21 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
                                     viewController:viewController
 #endif
                                       withTextures:[registrar textures]];
-  [registrar addMethodCallDelegate:instance channel:channel];
+  if (taskQueue == nil) {
+    instance->_methodQueue = dispatch_get_main_queue();
+    [registrar addMethodCallDelegate:instance channel:channel];
+    return;
+  }
+  dispatch_queue_t methodQueue = dispatch_queue_create(
+      "FlutterWebRTC.Method",
+      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+  instance->_methodQueue = methodQueue;
+  // The background task queue is serial, so calls reach methodQueue in order.
+  [channel setMethodCallHandler:^(FlutterMethodCall* call, FlutterResult result) {
+    dispatch_async(methodQueue, ^{
+      [instance handleMethodCall:call result:result];
+    });
+  }];
 }
 
 - (instancetype)initWithChannel:(FlutterMethodChannel*)channel
@@ -247,9 +399,9 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
   RTCInitFieldTrialDictionary(fieldTrials);
 #pragma clang diagnostic pop
 
-  self.peerConnections = [NSMutableDictionary new];
+  self.peerConnections = [FlutterRTCThreadSafeDictionary new];
   self.localStreams = [NSMutableDictionary new];
-  self.localTracks = [NSMutableDictionary new];
+  self.localTracks = [FlutterRTCThreadSafeDictionary new];
   self.renders = [NSMutableDictionary new];
   self.frameCryptors = [NSMutableDictionary new];
   self.dataCryptors = [NSMutableDictionary new];
@@ -368,7 +520,7 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
         // iOS also requires the AudioEngine ADM because the CoreAudio ADM
         // crashes when NSMicrophoneUsageDescription is absent (#2007, #2009).
         RTCAudioDeviceModuleType audioDeviceModuleType = RTCAudioDeviceModuleTypeAudioEngine;
-        _peerConnectionFactory =
+        RTCPeerConnectionFactory* factory =
             [[RTCPeerConnectionFactory alloc] initWithAudioDeviceModuleType:audioDeviceModuleType
                                                       bypassVoiceProcessing:bypassVoiceProcessing
                                                              encoderFactory:simulcastFactory
@@ -379,12 +531,12 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
         // device module's engine-lifecycle delegate. Only override the observer
         // when one is registered, leaving default behavior unchanged otherwise.
         if (gAudioDeviceModuleObserver != nil) {
-            _peerConnectionFactory.audioDeviceModule.observer = gAudioDeviceModuleObserver;
+            factory.audioDeviceModule.observer = gAudioDeviceModuleObserver;
         }
 
 #if TARGET_OS_OSX
         // CoreAudio ADM requires explicit device initialization on macOS
-        RTCAudioDeviceModule* audioDeviceModule = [_peerConnectionFactory audioDeviceModule];
+        RTCAudioDeviceModule* audioDeviceModule = [factory audioDeviceModule];
         if (audioDeviceModule) {
             NSArray* inputDevices = [audioDeviceModule inputDevices];
             if (inputDevices.count > 0) {
@@ -423,7 +575,11 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
             }
         }
 
-        [_peerConnectionFactory setOptions: options];
+        [factory setOptions: options];
+
+        // Publish only once fully configured: other plugins read the factory
+        // through +sharedSingleton from their own threads.
+        self.peerConnectionFactory = factory;
     }
 }
 
@@ -466,11 +622,13 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
     peerConnection.flutterId = peerConnectionId;
 
     /*Create Event Channel.*/
-    peerConnection.eventChannel = [FlutterEventChannel
-        eventChannelWithName:[NSString stringWithFormat:@"FlutterWebRTC/peerConnectionEvent%@",
-                                                        peerConnectionId]
-             binaryMessenger:_messenger];
-    [peerConnection.eventChannel setStreamHandler:peerConnection];
+    runOnMainThreadSync(^{
+      peerConnection.eventChannel = [FlutterEventChannel
+          eventChannelWithName:[NSString stringWithFormat:@"FlutterWebRTC/peerConnectionEvent%@",
+                                                          peerConnectionId]
+               binaryMessenger:self->_messenger];
+      [peerConnection.eventChannel setStreamHandler:peerConnection];
+    });
 
     self.peerConnections[peerConnectionId] = peerConnection;
     result(@{@"peerConnectionId" : peerConnectionId});
@@ -920,8 +1078,10 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
     [self deactiveRtcAudioSession];
     result(nil);
   } else if ([@"createVideoRenderer" isEqualToString:call.method]) {
-    FlutterRTCVideoRenderer* render = [self createWithTextureRegistry:_textures
-                                                            messenger:_messenger];
+    __block FlutterRTCVideoRenderer* render = nil;
+    runOnMainThreadSync(^{
+      render = [self createWithTextureRegistry:self->_textures messenger:self->_messenger];
+    });
     self.renders[@(render.textureId)] = render;
     result(@{@"textureId" : @(render.textureId)});
   } else if ([@"videoRendererDispose" isEqualToString:call.method]) {
@@ -930,7 +1090,9 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
     FlutterRTCVideoRenderer* render = self.renders[textureId];
     if(render != nil) {
       render.videoTrack = nil;
-      [render dispose];
+      runOnMainThreadSync(^{
+        [render dispose];
+      });
       [self.renders removeObjectForKey:textureId];
     }
     result(nil);
@@ -974,7 +1136,11 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
   else if ([@"videoPlatformViewRendererSetSrcObject" isEqualToString:call.method]) {
       NSDictionary* argsMap = call.arguments;
       NSNumber* viewId = argsMap[@"viewId"];
-      FlutterRTCVideoPlatformViewController* render = _platformViewFactory.renders[viewId];
+      // The factory registers platform views on the main thread.
+      __block FlutterRTCVideoPlatformViewController* render = nil;
+      runOnMainThreadSync(^{
+        render = self->_platformViewFactory.renders[viewId];
+      });
       NSString* streamId = argsMap[@"streamId"];
       NSString* ownerTag = argsMap[@"ownerTag"];
       NSString* trackId = argsMap[@"trackId"];
@@ -1009,10 +1175,14 @@ static __weak id<RTCAudioDeviceModuleDelegate> gAudioDeviceModuleObserver = nil;
   } else if ([@"videoPlatformViewRendererDispose" isEqualToString:call.method]) {
       NSDictionary* argsMap = call.arguments;
       NSNumber* viewId = argsMap[@"viewId"];
-      FlutterRTCVideoPlatformViewController* render = _platformViewFactory.renders[viewId];
+      // The factory registers platform views on the main thread.
+      __block FlutterRTCVideoPlatformViewController* render = nil;
+      runOnMainThreadSync(^{
+        render = self->_platformViewFactory.renders[viewId];
+        [self->_platformViewFactory.renders removeObjectForKey:viewId];
+      });
       if(render != nil) {
         render.videoTrack = nil;
-        [_platformViewFactory.renders removeObjectForKey:viewId];
       }
       result(nil);
     }

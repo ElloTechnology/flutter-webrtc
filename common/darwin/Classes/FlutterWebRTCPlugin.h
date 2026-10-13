@@ -15,6 +15,13 @@
 
 void postEvent(FlutterEventSink _Nullable sink, id _Nullable event);
 
+/// Runs `block` on the main thread and waits for it to finish, inline when
+/// already on the main thread. Method-call handlers use it for APIs that only
+/// work on the platform thread: event channel stream handlers, the texture
+/// registry and UIKit. Blocking the method queue on the main thread cannot
+/// deadlock because the main thread never waits on the method queue.
+void runOnMainThreadSync(dispatch_block_t _Nonnull block);
+
 typedef void (^CompletionHandler)(void);
 
 typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
@@ -30,7 +37,9 @@ typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
 #endif
                                            >
 
-@property(nonatomic, strong) RTCPeerConnectionFactory* _Nullable peerConnectionFactory;
+/// Atomic because other plugins read it from their own threads while a method
+/// call creates it.
+@property(atomic, strong) RTCPeerConnectionFactory* _Nullable peerConnectionFactory;
 @property(nonatomic, strong)
     NSMutableDictionary<NSString*, RTCPeerConnection*>* _Nullable peerConnections;
 @property(nonatomic, strong)
@@ -64,6 +73,12 @@ typedef void (^CapturerStopHandler)(CompletionHandler _Nonnull handler);
 @property(nonatomic, strong) NSString* _Nonnull exposureMode;
 
 @property(nonatomic, readonly) BOOL audioSessionManagementEnabled;
+
+/// Serial queue that runs method-channel calls, in the order Dart sent them.
+/// Work that continues a method call asynchronously and touches the plugin's
+/// registries resumes on this queue. It is the main queue where the binary
+/// messenger offers no background task queue (macOS).
+@property(nonatomic, strong, readonly) dispatch_queue_t _Nonnull methodQueue;
 
 /// Globally enable/disable Flutter WebRTC's own platform audio-session
 /// management (category/mode/focus/routing). Intended to be set once from
