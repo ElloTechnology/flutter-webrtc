@@ -38,7 +38,8 @@ class RTCDataChannelNative extends RTCDataChannel {
   @override
   set bufferedAmountLowThreshold(int? value) {
     _bufferedAmountLowThreshold = value;
-    WebRTC.invokeMethodFireAndForget('dataChannelSetBufferedAmountLowThreshold', {
+    WebRTC.invokeMethodFireAndForget(
+        'dataChannelSetBufferedAmountLowThreshold', {
       'peerConnectionId': _peerConnectionId,
       'dataChannelId': _flutterId,
       'threshold': value ?? -1,

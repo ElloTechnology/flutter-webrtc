@@ -619,7 +619,9 @@ typedef void (^NavigatorUserMediaSuccessCallback)(RTCMediaStream* mediaStream);
 #endif
     [AVCaptureDevice requestAccessForMediaType:mediaType
                              completionHandler:^(BOOL granted) {
-                               dispatch_async(dispatch_get_main_queue(), ^{
+                               // Resume on the method queue, which owns the
+                               // track and stream registries.
+                               dispatch_async(self.methodQueue, ^{
                                  if (granted) {
                                    NavigatorUserMediaSuccessCallback scb =
                                        ^(RTCMediaStream* mediaStream) {

@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, ello/main ]
 
 jobs:
   dart-format-and-analyze-check:
