@@ -29,6 +29,7 @@ import com.cloudwebrtc.webrtc.audio.AudioSwitchManager;
 import com.cloudwebrtc.webrtc.audio.AudioUtils;
 import com.cloudwebrtc.webrtc.audio.LocalAudioTrack;
 import com.cloudwebrtc.webrtc.audio.PlaybackSamplesReadyCallbackAdapter;
+import com.cloudwebrtc.webrtc.audio.RecordSamplesListeners;
 import com.cloudwebrtc.webrtc.audio.RecordSamplesReadyCallbackAdapter;
 import com.cloudwebrtc.webrtc.record.AudioChannel;
 import com.cloudwebrtc.webrtc.record.FrameCapturer;
@@ -305,7 +306,7 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
 
     recordSamplesReadyCallbackAdapter.addCallback(getUserMediaImpl.inputSamplesInterceptor);
 
-    recordSamplesReadyCallbackAdapter.addCallback(FlutterWebRTCPlugin.applicationRecordSamplesCallbacks());
+    recordSamplesReadyCallbackAdapter.addCallback(RecordSamplesListeners.samplesReadyCallback());
 
     recordSamplesReadyCallbackAdapter.addCallback(new JavaAudioDeviceModule.SamplesReadyCallback() {
       @Override
