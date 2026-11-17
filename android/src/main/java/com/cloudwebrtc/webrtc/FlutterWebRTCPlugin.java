@@ -14,6 +14,7 @@ import androidx.lifecycle.LifecycleOwner;
 
 import com.cloudwebrtc.webrtc.audio.AudioProcessingController;
 import com.cloudwebrtc.webrtc.audio.AudioSwitchManager;
+import com.cloudwebrtc.webrtc.audio.RecordSamplesReadyCallbackAdapter;
 import com.cloudwebrtc.webrtc.utils.AnyThreadSink;
 import com.cloudwebrtc.webrtc.utils.ConstraintsMap;
 
@@ -53,6 +54,31 @@ public class FlutterWebRTCPlugin implements FlutterPlugin, ActivityAware, EventC
 
     public FlutterWebRTCPlugin() {
         sharedSingleton = this;
+    }
+
+    // Process-wide, so a callback registered before the peer connection
+    // factory exists, or before a later engine re-creates it, still receives
+    // every recorded buffer of every audio device module this plugin builds.
+    private static final RecordSamplesReadyCallbackAdapter applicationRecordSamplesCallbacks =
+            new RecordSamplesReadyCallbackAdapter();
+
+    /**
+     * Registers a callback for every buffer the microphone records, before
+     * WebRTC's audio processing. It runs on the audio record thread every
+     * 10 ms, so it must not block or allocate.
+     */
+    public static void addRecordSamplesReadyCallback(
+            @NonNull JavaAudioDeviceModule.SamplesReadyCallback callback) {
+        applicationRecordSamplesCallbacks.addCallback(callback);
+    }
+
+    public static void removeRecordSamplesReadyCallback(
+            @NonNull JavaAudioDeviceModule.SamplesReadyCallback callback) {
+        applicationRecordSamplesCallbacks.removeCallback(callback);
+    }
+
+    static JavaAudioDeviceModule.SamplesReadyCallback applicationRecordSamplesCallbacks() {
+        return applicationRecordSamplesCallbacks;
     }
 
     public static FlutterWebRTCPlugin sharedSingleton;

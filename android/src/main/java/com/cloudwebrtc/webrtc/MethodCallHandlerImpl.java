@@ -305,6 +305,8 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
 
     recordSamplesReadyCallbackAdapter.addCallback(getUserMediaImpl.inputSamplesInterceptor);
 
+    recordSamplesReadyCallbackAdapter.addCallback(FlutterWebRTCPlugin.applicationRecordSamplesCallbacks());
+
     recordSamplesReadyCallbackAdapter.addCallback(new JavaAudioDeviceModule.SamplesReadyCallback() {
       @Override
       public void onWebRtcAudioRecordSamplesReady(JavaAudioDeviceModule.AudioSamples audioSamples) {
