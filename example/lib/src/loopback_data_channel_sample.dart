@@ -57,8 +57,8 @@ class _DataChannelLoopBackSampleState extends State<DataChannelLoopBackSample> {
           });
 
           // Fire-and-forget: send is intentionally not awaited (see rtc_data_channel_impl.dart).
-          _dataChannel2!.send(RTCDataChannelMessage(
-              '(dataChannel2 ==> dataChannel1) Hello from dataChannel2 echo !!!'));
+          unawaited(_dataChannel2!.send(RTCDataChannelMessage(
+              '(dataChannel2 ==> dataChannel1) Hello from dataChannel2 echo !!!')));
         };
       };
 
